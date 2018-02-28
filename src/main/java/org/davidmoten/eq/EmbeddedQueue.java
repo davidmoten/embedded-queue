@@ -1,6 +1,13 @@
 package org.davidmoten.eq;
 
+import java.io.BufferedReader;
 import java.io.File;
+import java.io.FileInputStream;
+import java.io.IOException;
+import java.io.InputStreamReader;
+import java.nio.charset.StandardCharsets;
+import java.util.LinkedList;
+import java.util.List;
 
 import com.github.davidmoten.guavamini.Preconditions;
 
@@ -12,6 +19,7 @@ public final class EmbeddedQueue<T> implements AutoCloseable {
     private final File fileList;
     private final String prefix;
     private final Object lock = new Object();
+    private final List<File> files;
 
     EmbeddedQueue(Serializer<T> serializer, File directory, int maxFileSize, String prefix) {
         Preconditions.checkNotNull(serializer);
@@ -24,6 +32,24 @@ public final class EmbeddedQueue<T> implements AutoCloseable {
         this.maxFileSize = maxFileSize;
         this.fileList = new File(directory, prefix + "-file-list.txt");
         this.prefix = prefix;
+        this.files = loadFiles(fileList);
+    }
+
+    private static List<File> loadFiles(File f) {
+        List<File> files = new LinkedList<File>();
+        try (BufferedReader br = new BufferedReader(
+                new InputStreamReader(new FileInputStream(f), StandardCharsets.UTF_8))) {
+            String line;
+            while ((line = br.readLine())!=null) {
+                line = line.trim();
+                if (line.length()>0) {
+                    files.add(new File(line));
+                }
+            }
+            return files;
+        } catch (IOException e) {
+            throw new RuntimeException(e);
+        }
     }
 
     public void add(byte[] bytes) {
