@@ -4,13 +4,17 @@ import java.io.BufferedReader;
 import java.io.DataOutputStream;
 import java.io.File;
 import java.io.FileInputStream;
-import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.io.RandomAccessFile;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.zip.CRC32;
 
 import com.github.davidmoten.guavamini.Preconditions;
 
@@ -35,6 +39,7 @@ public final class EmbeddedQueue implements AutoCloseable {
     private final Object indexLock = new Object();
     private final Object filesLock = new Object();
     private final IndexedFiles files;
+    private final List<QueueReader> readers = new ArrayList<QueueReader>();
 
     // mutable
     private RandomAccessFile latestWriteFile;
@@ -73,10 +78,11 @@ public final class EmbeddedQueue implements AutoCloseable {
         }
     }
 
-    public void add(long time, byte[] bytes) {
-        // add is serialized with itself
+    public void add(long time, byte[] message) {
+        // add is serialized with itself by client contract
 
-        if (files.first==null || latestFileSize + bytes.length >= maxFileSize) {
+        latestFileSize += message.length + 4 + 8; // + LENGTH + CRC32 checksum
+        if (files.first == null || latestFileSize >= maxFileSize) {
             addFile();
         }
         // if no files or latest file size greater than threshold
@@ -91,13 +97,21 @@ public final class EmbeddedQueue implements AutoCloseable {
         try {
             long position = latestWriteFile.getFilePointer();
             // TODO and if crash just after writing zero bytes?
-            latestWriteFile.write(ZERO_BYTES);
-            latestWriteFile.write(bytes);
-            latestWriteFile.seek(position);
+            latestWriteFile.write(message);
+            // TODO use ThreadLocal value?
+            CRC32 checksum = new CRC32();
+            checksum.update(message);
+            latestWriteFile.write(toBytes(checksum.getValue()));
+            synchronized (lengthLock) {
+                latestWriteFile.write(ZERO_BYTES);
+            }
+            // now go back to the first field of the record (4 bytes = length of message in
+            // bytes)
+            latestWriteFile.seek(position - 4);
             synchronized (lengthLock) {
                 // needs to be happens-before a read so that read
                 // doesn't find a partially written length field
-                latestWriteFile.write(toBytes(bytes.length));
+                latestWriteFile.write(toBytes(message.length));
             }
             synchronized (indexLock) {
                 latestIndexOutputStream.write(toBytes(time));
@@ -106,10 +120,15 @@ public final class EmbeddedQueue implements AutoCloseable {
         } catch (IOException e) {
             throw new IORuntimeException(e);
         }
+        // TODO use single wip?
+        for (QueueReader reader : readers) {
+            reader.drain();
+        }
 
     }
 
     private void addFile() {
+        // TODO write -1 to end of current file in length field
         fileNumber++;
         IndexedFile f = createIndexedFile(directory, prefix, fileNumber);
         synchronized (filesLock) {
@@ -117,10 +136,10 @@ public final class EmbeddedQueue implements AutoCloseable {
         }
         closeQuietly(latestWriteFile);
         closeQuietly(latestIndexOutputStream);
-        IndexedFile last = files.last.file;
         try {
-            latestWriteFile = new RandomAccessFile(last.file, "rw");
-            latestIndexOutputStream = new DataOutputStream(new FileOutputStream(last.index));
+            latestWriteFile = new RandomAccessFile(f.file, "rw");
+            latestWriteFile.write(ZERO_BYTES);
+            latestIndexOutputStream = new DataOutputStream(new FileOutputStream(f.index));
         } catch (IOException e) {
             throw new IORuntimeException(e);
         }
@@ -179,16 +198,19 @@ public final class EmbeddedQueue implements AutoCloseable {
         b.append(s);
         return b.toString();
     }
-    
-    public QueueReader addReader(long sinceTime) {
-        //TODO 
-        return null;
+
+    public QueueReader addReader(long sinceTime, OutputStream out) {
+        // do binary search on index files to find starting point
+        IndexedFileNode node = files.first;
+        QueueReader reader = new QueueReader(0, node, out, lengthLock);
+        readers.add(reader);
+        return reader;
     }
-    
+
     public void removeReader(QueueReader reader) {
-        
+
     }
-    
+
     @Override
     public void close() {
         closeQuietly(latestWriteFile);
@@ -227,17 +249,141 @@ public final class EmbeddedQueue implements AutoCloseable {
         return result;
     }
 
-    private static final class QueueReaders {
-
+    public static int toInt(byte[] bytes) {
+        int ret = 0;
+        for (int i = 0; i < 4 && i < bytes.length; i++) {
+            ret <<= 8;
+            ret |= (int) bytes[i] & 0xFF;
+        }
+        return ret;
     }
 
-    private static final class QueueReader {
-        final long sinceTime;
-        IndexedFileNode current;
+    public static final class QueueReader {
+        private IndexedFileNode current;
+        // requests can come from other threads so needs to be atomic
+        private final AtomicLong requested = new AtomicLong();
 
-        QueueReader(long sinceTime, IndexedFileNode current) {
-            this.sinceTime = sinceTime;
+        // synchronized by wip
+        private long emitted;
+        private volatile boolean cancelled = false;
+        private final OutputStream out;
+        private final Object lengthLock;
+
+        private final AtomicInteger wip = new AtomicInteger();
+
+        // mutable
+        private RandomAccessFile file;
+
+        QueueReader(int startPosition, IndexedFileNode current, OutputStream out, Object lengthLock) {
             this.current = current;
+            this.out = out;
+            this.lengthLock = lengthLock;
+            try {
+                this.file = new RandomAccessFile(current.file.file, "rw");
+                file.seek(startPosition);
+            } catch (IOException e) {
+                throw new RuntimeException(e);
+            }
+        }
+
+        public void request(long n) {
+            // CAS loop to add request and avoid overflow
+            while (true) {
+                long r = requested.get();
+                if (r == Long.MAX_VALUE) {
+                    return;
+                } else {
+                    long r2 = r + n;
+                    if (r2 < 0) {
+                        r2 = Long.MAX_VALUE;
+                    }
+                    if (requested.compareAndSet(r, r2)) {
+                        break;
+                    }
+                }
+            }
+
+            drain();
+        }
+
+        public void cancel() {
+            cancelled = true;
+            closeQuietly(out);
+        }
+
+        private final byte[] lengthBytes = new byte[4];
+        private final byte[] crcBytes = new byte[4];
+
+        // mutable, persistent if message length does not vary
+        private byte[] messageBytes = new byte[0];
+
+        private void drain() {
+            // serialize drain loop using wip atomic counter
+            if (wip.getAndIncrement() == 0) {
+                int missed = 1;
+                while (true) {
+                    long r = requested.get();
+                    long e = emitted;
+                    while (e != r) {
+                        if (cancelled) {
+                            return;
+                        }
+                        try {
+                            if (file == null) {
+                                break;
+                            }
+                            long position = file.getFilePointer();
+                            if (file.length() - position >= 4) {
+
+                                // TODO make non-blocking
+                                synchronized (lengthLock) {
+                                    file.readFully(lengthBytes);
+                                }
+                                int length = toInt(lengthBytes);
+                                if (length == 0) {
+                                    file.seek(position);
+                                    break;
+                                }
+                                if (length == -1) {
+                                    // EOF
+                                    file.close();
+                                } else {
+                                    if (messageBytes.length != length) {
+                                        messageBytes = new byte[length];
+                                    }
+                                    file.readFully(messageBytes);
+                                    file.readFully(crcBytes);
+                                    // TODO use ThreadLocal cache for CRC32
+                                    CRC32 crc = new CRC32();
+                                    crc.update(messageBytes);
+                                    if (crc.getValue() != toLong(crcBytes)) {
+                                        // TODO handle corrupt message (report it, alert, archive it)
+                                        System.err.println("message had invalid checksum so was discarded");
+                                    } else {
+                                        // write message to output stream
+                                        // don't include crc because protocol will ensure no corruption
+                                        out.write(lengthBytes);
+                                        out.write(messageBytes);
+                                    }
+                                }
+                            }
+                        } catch (IOException ex) {
+                            throw new IORuntimeException(ex);
+                        }
+
+                        // go to read point
+                        // if end-of-file or zero length found then break
+                        // else read length
+                        // stream bytes to that length
+                        e++;
+                    }
+                    emitted = e;
+                    missed = wip.addAndGet(-missed);
+                    if (missed == 0) {
+                        break;
+                    }
+                }
+            }
         }
     }
 
@@ -251,7 +397,7 @@ public final class EmbeddedQueue implements AutoCloseable {
         }
     }
 
-    //Not thread-safe
+    // Not thread-safe
     private static final class IndexedFiles {
         // mutable
         IndexedFileNode first;
