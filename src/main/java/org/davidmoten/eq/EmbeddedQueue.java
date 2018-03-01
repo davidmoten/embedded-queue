@@ -1,6 +1,7 @@
 package org.davidmoten.eq;
 
 import java.io.BufferedReader;
+import java.io.DataOutputStream;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileNotFoundException;
@@ -25,11 +26,13 @@ public final class EmbeddedQueue implements AutoCloseable {
     private int fileNumber = 0;
     private int latestFileSize = 0;
     private final int maxNumFiles;
+    // TODO make these specific to a file
     private final Object lengthLock = new Object();
+    private final Object indexLock = new Object();
 
     // mutable
     private RandomAccessFile latestFile;
-    private OutputStream latestIndexOutputStream;
+    private DataOutputStream latestIndexOutputStream;
 
     private static final byte[] ZERO_BYTES = toByteArray(0);
 
@@ -90,12 +93,14 @@ public final class EmbeddedQueue implements AutoCloseable {
                 // doesn't find a partially written length field
                 latestFile.write(toByteArray(bytes.length));
             }
+            synchronized (indexLock) {
+                latestIndexOutputStream.write(toBytes(time));
+                latestIndexOutputStream.write(toBytes(position));
+            }
         } catch (IOException e) {
             throw new IORuntimeException(e);
         }
 
-        // add the time and position to the latest index file. The addition should be
-        // happens-before a read of that length.
     }
 
     private void addFile() {
@@ -106,7 +111,7 @@ public final class EmbeddedQueue implements AutoCloseable {
         IndexedFile last = files.get(files.size() - 1);
         try {
             latestFile = new RandomAccessFile(last.file, "rw");
-            latestIndexOutputStream = new FileOutputStream(last.index);
+            latestIndexOutputStream = new DataOutputStream(new FileOutputStream(last.index));
         } catch (FileNotFoundException e) {
             throw new IORuntimeException(e);
         }
@@ -180,6 +185,24 @@ public final class EmbeddedQueue implements AutoCloseable {
 
     private static final byte[] toByteArray(int value) {
         return new byte[] { (byte) (value >>> 24), (byte) (value >>> 16), (byte) (value >>> 8), (byte) value };
+    }
+
+    public static byte[] toBytes(long l) {
+        byte[] result = new byte[8];
+        for (int i = 7; i >= 0; i--) {
+            result[i] = (byte) (l & 0xFF);
+            l >>= 8;
+        }
+        return result;
+    }
+
+    public static long toLong(byte[] b) {
+        long result = 0;
+        for (int i = 0; i < 8; i++) {
+            result <<= 8;
+            result |= (b[i] & 0xFF);
+        }
+        return result;
     }
 
 }
