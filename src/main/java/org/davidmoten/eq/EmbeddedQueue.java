@@ -8,13 +8,14 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.io.OutputStream;
+import java.io.RandomAccessFile;
 import java.nio.charset.StandardCharsets;
 import java.util.LinkedList;
 import java.util.List;
 
 import com.github.davidmoten.guavamini.Preconditions;
 
-public final class EmbeddedQueue<T> implements AutoCloseable {
+public final class EmbeddedQueue implements AutoCloseable {
 
     private final File directory;
     private final int maxFileSize;
@@ -24,10 +25,13 @@ public final class EmbeddedQueue<T> implements AutoCloseable {
     private int fileNumber = 0;
     private int latestFileSize = 0;
     private final int maxNumFiles;
+    private final Object lengthLock = new Object();
 
-    //mutable
-    private OutputStream out;
+    // mutable
+    private RandomAccessFile out;
     private OutputStream outIndex;
+
+    private static final byte[] ZERO_BYTES = toByteArray(0);
 
     EmbeddedQueue(File directory, int maxFileSize, int maxNumFiles, String prefix) {
         Preconditions.checkNotNull(directory);
@@ -76,6 +80,20 @@ public final class EmbeddedQueue<T> implements AutoCloseable {
         // with the length of the bytes. The rewriting of the length should be
         // happens-before a read of that length
 
+        try {
+            long position = out.getFilePointer();
+            out.write(ZERO_BYTES);
+            out.write(bytes);
+            out.seek(position);
+            synchronized (lengthLock) {
+                // needs to be happens-before a read so that read
+                // doesn't find a partially written length field
+                out.write(toByteArray(bytes.length));
+            }
+        } catch (IOException e) {
+            throw new IORuntimeException(e);
+        }
+
         // add the time and position to the latest index file. The addition should be
         // happens-before a read of that length.
     }
@@ -87,7 +105,7 @@ public final class EmbeddedQueue<T> implements AutoCloseable {
         closeQuietly(outIndex);
         IndexedFile last = files.get(files.size() - 1);
         try {
-            out = new FileOutputStream(last.file);
+            out = new RandomAccessFile(last.file, "rw");
             outIndex = new FileOutputStream(last.index);
         } catch (FileNotFoundException e) {
             throw new IORuntimeException(e);
@@ -95,7 +113,17 @@ public final class EmbeddedQueue<T> implements AutoCloseable {
         latestFileSize = 0;
         // remove old files
         if (files.size() > maxNumFiles) {
+            files.remove(0);
+        }
+    }
 
+    private static void closeQuietly(RandomAccessFile f) {
+        if (f != null) {
+            try {
+                f.close();
+            } catch (IOException e) {
+                throw new IORuntimeException(e);
+            }
         }
     }
 
@@ -115,6 +143,17 @@ public final class EmbeddedQueue<T> implements AutoCloseable {
         String num = prefixWithZeroes(fileNumber + "", 8);
         File file = new File(directory, prefix + "-" + num);
         File index = new File(directory, prefix + "-" + num + ".idx");
+        try {
+            boolean result = file.getParentFile().mkdirs();
+            System.out.println(result);
+            System.out.println(file);
+            System.out.println(file.exists());
+            System.out.println(file.getParentFile().isDirectory());
+            file.createNewFile();
+            index.createNewFile();
+        } catch (IOException e) {
+            throw new IORuntimeException(e);
+        }
         return new IndexedFile(file, index);
     }
 
@@ -140,6 +179,10 @@ public final class EmbeddedQueue<T> implements AutoCloseable {
             this.file = file;
             this.index = index;
         }
+    }
+
+    private static final byte[] toByteArray(int value) {
+        return new byte[] { (byte) (value >>> 24), (byte) (value >>> 16), (byte) (value >>> 8), (byte) value };
     }
 
 }
