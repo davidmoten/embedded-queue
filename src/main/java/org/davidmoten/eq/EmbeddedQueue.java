@@ -21,6 +21,50 @@ import com.github.davidmoten.guavamini.Preconditions;
 /**
  * Support single producer, multiple consumers, Kafka-style read since timestamp
  * instead of guaranteed delivery (client manages guarantees).
+ * 
+ * 
+ * <p>
+ * Must recover from failures (messages must be persisted for starters).
+ * 
+ * <p>
+ * Message validity must be tested (using checksums).
+ * 
+ * <p>
+ * Java 9 compatible.
+ * 
+ * <p>
+ * Maximize non-blocking (some level of blocking will be necessary due to
+ * network and disk IO but should be isolated to dedicated IO threads).
+ * 
+ * <p>
+ * Wait-free consuming (by breaking up requests into discrete chunks so that one
+ * reader doesn't get a chance to dominate)
+ *
+ * <p>
+ * Design
+ *
+ * <p>
+ * Each new reader will be managed by a QueueReader object.
+ * 
+ * <p>
+ * Multiple QueueReader instances are managed by a single QueueReaders object.
+ * 
+ * <p>
+ * Each QueueReader has an io thread dedicated to writing buffered reads to its
+ * OutputStream.
+ * 
+ * <p>
+ * Each QueueReader has a second io thread dedicated to reading messages from
+ * the current RandomAccessFile and placing them on a buffered reads queue.
+ * 
+ *<p> Each QueueReader has a status field corresponding to this state diagram:
+ *
+ *<pre> 
+ *No segment &lt;--&gt; Getting next segment &lt;--&gt; Accepting Reads 
+ *</pre>
+ * 
+ * 
+ *
  *
  */
 public final class EmbeddedQueue implements AutoCloseable {
