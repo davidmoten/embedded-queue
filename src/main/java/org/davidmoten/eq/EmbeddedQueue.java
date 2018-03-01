@@ -76,7 +76,7 @@ public final class EmbeddedQueue implements AutoCloseable {
     public void add(long time, byte[] bytes) {
         // add is serialized with itself
 
-        if (files == null || latestFileSize + bytes.length >= maxFileSize) {
+        if (files.first==null || latestFileSize + bytes.length >= maxFileSize) {
             addFile();
         }
         // if no files or latest file size greater than threshold
@@ -121,7 +121,7 @@ public final class EmbeddedQueue implements AutoCloseable {
         try {
             latestWriteFile = new RandomAccessFile(last.file, "rw");
             latestIndexOutputStream = new DataOutputStream(new FileOutputStream(last.index));
-        } catch (FileNotFoundException e) {
+        } catch (IOException e) {
             throw new IORuntimeException(e);
         }
         latestFileSize = 0;
@@ -179,7 +179,16 @@ public final class EmbeddedQueue implements AutoCloseable {
         b.append(s);
         return b.toString();
     }
-
+    
+    public QueueReader addReader(long sinceTime) {
+        //TODO 
+        return null;
+    }
+    
+    public void removeReader(QueueReader reader) {
+        
+    }
+    
     @Override
     public void close() {
         closeQuietly(latestWriteFile);
