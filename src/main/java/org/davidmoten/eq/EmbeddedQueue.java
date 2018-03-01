@@ -11,30 +11,34 @@ import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.io.RandomAccessFile;
 import java.nio.charset.StandardCharsets;
-import java.util.LinkedList;
-import java.util.List;
 
 import com.github.davidmoten.guavamini.Preconditions;
 
+/**
+ * Support single producer, multiple consumers, Kafka-style read since timestamp
+ * instead of guaranteed delivery (client manages guarantees).
+ *
+ */
 public final class EmbeddedQueue implements AutoCloseable {
+
+    private static final byte[] ZERO_BYTES = toBytes(0);
 
     private final File directory;
     private final int maxFileSize;
     private final File fileList;
     private final String prefix;
-    private final List<IndexedFile> files;
     private int fileNumber = 0;
     private int latestFileSize = 0;
     private final int maxNumFiles;
     // TODO make these specific to a file
     private final Object lengthLock = new Object();
     private final Object indexLock = new Object();
+    private final Object filesLock = new Object();
+    private final IndexedFiles files;
 
     // mutable
-    private RandomAccessFile latestFile;
+    private RandomAccessFile latestWriteFile;
     private DataOutputStream latestIndexOutputStream;
-
-    private static final byte[] ZERO_BYTES = toByteArray(0);
 
     EmbeddedQueue(File directory, int maxFileSize, int maxNumFiles, String prefix) {
         Preconditions.checkNotNull(directory);
@@ -48,30 +52,31 @@ public final class EmbeddedQueue implements AutoCloseable {
         this.maxNumFiles = maxNumFiles;
     }
 
-    private static List<IndexedFile> loadFileList(File f) {
-        List<IndexedFile> files = new LinkedList<IndexedFile>();
+    private static IndexedFiles loadFileList(File f) {
+        IndexedFiles files = new IndexedFiles();
         if (!f.exists()) {
             return files;
-        }
-        try (BufferedReader br = new BufferedReader(
-                new InputStreamReader(new FileInputStream(f), StandardCharsets.UTF_8))) {
-            String line;
-            while ((line = br.readLine()) != null) {
-                line = line.trim();
-                if (line.length() > 0) {
-                    files.add(new IndexedFile(new File(line), new File(line + ".idx")));
+        } else {
+            try (BufferedReader br = new BufferedReader(
+                    new InputStreamReader(new FileInputStream(f), StandardCharsets.UTF_8))) {
+                String line;
+                while ((line = br.readLine()) != null) {
+                    line = line.trim();
+                    if (line.length() > 0) {
+                        files.add(new IndexedFile(new File(line), new File(line + ".idx")));
+                    }
                 }
+                return files;
+            } catch (IOException e) {
+                throw new IORuntimeException(e);
             }
-            return files;
-        } catch (IOException e) {
-            throw new IORuntimeException(e);
         }
     }
 
     public void add(long time, byte[] bytes) {
         // add is serialized with itself
 
-        if (files.isEmpty() || latestFileSize + bytes.length >= maxFileSize) {
+        if (files == null || latestFileSize + bytes.length >= maxFileSize) {
             addFile();
         }
         // if no files or latest file size greater than threshold
@@ -84,14 +89,15 @@ public final class EmbeddedQueue implements AutoCloseable {
         // happens-before a read of that length
 
         try {
-            long position = latestFile.getFilePointer();
-            latestFile.write(ZERO_BYTES);
-            latestFile.write(bytes);
-            latestFile.seek(position);
+            long position = latestWriteFile.getFilePointer();
+            // TODO and if crash just after writing zero bytes?
+            latestWriteFile.write(ZERO_BYTES);
+            latestWriteFile.write(bytes);
+            latestWriteFile.seek(position);
             synchronized (lengthLock) {
                 // needs to be happens-before a read so that read
                 // doesn't find a partially written length field
-                latestFile.write(toByteArray(bytes.length));
+                latestWriteFile.write(toBytes(bytes.length));
             }
             synchronized (indexLock) {
                 latestIndexOutputStream.write(toBytes(time));
@@ -105,12 +111,15 @@ public final class EmbeddedQueue implements AutoCloseable {
 
     private void addFile() {
         fileNumber++;
-        files.add(createIndexedFile(directory, prefix, fileNumber));
-        closeQuietly(latestFile);
+        IndexedFile f = createIndexedFile(directory, prefix, fileNumber);
+        synchronized (filesLock) {
+            files.add(f);
+        }
+        closeQuietly(latestWriteFile);
         closeQuietly(latestIndexOutputStream);
-        IndexedFile last = files.get(files.size() - 1);
+        IndexedFile last = files.last.file;
         try {
-            latestFile = new RandomAccessFile(last.file, "rw");
+            latestWriteFile = new RandomAccessFile(last.file, "rw");
             latestIndexOutputStream = new DataOutputStream(new FileOutputStream(last.index));
         } catch (FileNotFoundException e) {
             throw new IORuntimeException(e);
@@ -118,8 +127,12 @@ public final class EmbeddedQueue implements AutoCloseable {
         latestFileSize = 0;
         // remove old files
         if (files.size() > maxNumFiles) {
-            files.remove(0);
+            deleteFirst(files);
         }
+    }
+
+    private void deleteFirst(IndexedFiles files) {
+        // TODO delete expired file
     }
 
     private static void closeQuietly(RandomAccessFile f) {
@@ -169,7 +182,7 @@ public final class EmbeddedQueue implements AutoCloseable {
 
     @Override
     public void close() {
-        closeQuietly(latestFile);
+        closeQuietly(latestWriteFile);
         closeQuietly(latestIndexOutputStream);
     }
 
@@ -183,7 +196,7 @@ public final class EmbeddedQueue implements AutoCloseable {
         }
     }
 
-    private static final byte[] toByteArray(int value) {
+    private static final byte[] toBytes(int value) {
         return new byte[] { (byte) (value >>> 24), (byte) (value >>> 16), (byte) (value >>> 8), (byte) value };
     }
 
@@ -203,6 +216,53 @@ public final class EmbeddedQueue implements AutoCloseable {
             result |= (b[i] & 0xFF);
         }
         return result;
+    }
+
+    private static final class QueueReaders {
+
+    }
+
+    private static final class QueueReader {
+        final long sinceTime;
+        IndexedFileNode current;
+
+        QueueReader(long sinceTime, IndexedFileNode current) {
+            this.sinceTime = sinceTime;
+            this.current = current;
+        }
+    }
+
+    private static final class IndexedFileNode {
+        final IndexedFile file;
+        IndexedFileNode next;
+
+        IndexedFileNode(IndexedFile file, IndexedFileNode next) {
+            this.file = file;
+            this.next = next;
+        }
+    }
+
+    //Not thread-safe
+    private static final class IndexedFiles {
+        // mutable
+        IndexedFileNode first;
+        IndexedFileNode last;
+        int size;
+
+        public void add(IndexedFile f) {
+            if (first == null) {
+                first = new IndexedFileNode(f, null);
+                last = first;
+            } else {
+                IndexedFileNode node = new IndexedFileNode(f, null);
+                last.next = node;
+            }
+            size++;
+        }
+
+        public int size() {
+            return size;
+        }
     }
 
 }
