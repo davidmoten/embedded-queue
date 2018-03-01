@@ -28,8 +28,8 @@ public final class EmbeddedQueue implements AutoCloseable {
     private final Object lengthLock = new Object();
 
     // mutable
-    private RandomAccessFile out;
-    private OutputStream outIndex;
+    private RandomAccessFile latestFile;
+    private OutputStream latestIndexOutputStream;
 
     private static final byte[] ZERO_BYTES = toByteArray(0);
 
@@ -81,14 +81,14 @@ public final class EmbeddedQueue implements AutoCloseable {
         // happens-before a read of that length
 
         try {
-            long position = out.getFilePointer();
-            out.write(ZERO_BYTES);
-            out.write(bytes);
-            out.seek(position);
+            long position = latestFile.getFilePointer();
+            latestFile.write(ZERO_BYTES);
+            latestFile.write(bytes);
+            latestFile.seek(position);
             synchronized (lengthLock) {
                 // needs to be happens-before a read so that read
                 // doesn't find a partially written length field
-                out.write(toByteArray(bytes.length));
+                latestFile.write(toByteArray(bytes.length));
             }
         } catch (IOException e) {
             throw new IORuntimeException(e);
@@ -101,12 +101,12 @@ public final class EmbeddedQueue implements AutoCloseable {
     private void addFile() {
         fileNumber++;
         files.add(createIndexedFile(directory, prefix, fileNumber));
-        closeQuietly(out);
-        closeQuietly(outIndex);
+        closeQuietly(latestFile);
+        closeQuietly(latestIndexOutputStream);
         IndexedFile last = files.get(files.size() - 1);
         try {
-            out = new RandomAccessFile(last.file, "rw");
-            outIndex = new FileOutputStream(last.index);
+            latestFile = new RandomAccessFile(last.file, "rw");
+            latestIndexOutputStream = new FileOutputStream(last.index);
         } catch (FileNotFoundException e) {
             throw new IORuntimeException(e);
         }
@@ -144,11 +144,7 @@ public final class EmbeddedQueue implements AutoCloseable {
         File file = new File(directory, prefix + "-" + num);
         File index = new File(directory, prefix + "-" + num + ".idx");
         try {
-            boolean result = file.getParentFile().mkdirs();
-            System.out.println(result);
-            System.out.println(file);
-            System.out.println(file.exists());
-            System.out.println(file.getParentFile().isDirectory());
+            file.getParentFile().mkdirs();
             file.createNewFile();
             index.createNewFile();
         } catch (IOException e) {
@@ -168,7 +164,8 @@ public final class EmbeddedQueue implements AutoCloseable {
 
     @Override
     public void close() {
-        // shutdown
+        closeQuietly(latestFile);
+        closeQuietly(latestIndexOutputStream);
     }
 
     private static final class IndexedFile {
