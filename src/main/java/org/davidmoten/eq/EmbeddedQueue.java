@@ -29,6 +29,9 @@ public final class EmbeddedQueue {
 
     private static final int CHECKSUM_NUM_BYTES = 8;
     private static final int LENGTH_NUM_BYTES = 4;
+    private static final int LENGTH_ZERO = 0;
+    private static final int EOF = -1;
+
     private final SimplePlainQueue<Object> queue;
     private final Store store;
     private final AtomicInteger wip = new AtomicInteger();
@@ -40,7 +43,8 @@ public final class EmbeddedQueue {
     // only used by write thread
     private int fileNumber;
 
-    public EmbeddedQueue(File directory, int maxSegmentSize, long addSegmentMaxWaitTimeMs, int batchSize) {
+    public EmbeddedQueue(File directory, int maxSegmentSize, long addSegmentMaxWaitTimeMs,
+            int batchSize) {
         this.directory = directory;
         this.maxSegmentSize = maxSegmentSize;
         this.addSegmentMaxWaitTimeMs = addSegmentMaxWaitTimeMs;
@@ -223,9 +227,6 @@ public final class EmbeddedQueue {
     static final class Segment {
         private static final String READ_WRITE = "rw";
 
-        private static final int LENGTH_ZERO = 0;
-        private static final int EOF = -1;
-
         final File file;
         final File index;
         int size;
@@ -353,8 +354,13 @@ public final class EmbeddedQueue {
                     while (e != r) {
                         long startPosition = f.getFilePointer();
                         int length = f.readInt();
-                        if (length == 0) {
+                        if (length == LENGTH_ZERO) {
                             return true;
+                        }
+                        if (length == EOF) {
+                            advanceToNextFile();
+                            result = false;
+                            break;
                         } else if (length + f.getFilePointer() > f.length()) {
                             reportError("message in file " + segment.file + " at position "
                                     + startPosition + " is longer than the length of the file");
