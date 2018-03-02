@@ -6,20 +6,21 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 
+import org.davidmoten.eq.EmbeddedQueue.Reader;
 import org.junit.Test;
 
 public class EmbeddedQueueTest {
 
-//    @Test
-//    public void test() throws IOException {
-//        Path directory = Files.createTempDirectory(new File("target").toPath(), "test");
-//        ByteArrayOutputStream out = new ByteArrayOutputStream();
-//        try (EmbeddedQueue q = new EmbeddedQueue(directory.toFile(), 100, 3, "test")) {
-//            q.addReader(0, out);
-//            q.add(0, "boo".getBytes());
-//            q.add(1, "you".getBytes());
-//        }
-//        System.out.println(out.toString());
-//    }
+    @Test
+    public void test() throws IOException {
+        Path directory = Files.createTempDirectory(new File("target").toPath(), "test");
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        EmbeddedQueue q = new EmbeddedQueue(directory.toFile(), 100, 30000);
+        Reader reader = q.addReader(0, out);
+        reader.start();
+        q.addMessage(0, "boo".getBytes());
+        q.addMessage(1, "you".getBytes());
+        System.out.println(out.toString());
+    }
 
 }
