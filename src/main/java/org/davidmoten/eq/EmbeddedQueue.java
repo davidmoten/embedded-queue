@@ -1,5 +1,6 @@
 package org.davidmoten.eq;
 
+import static org.davidmoten.eq.Util.addRequest;
 import static org.davidmoten.eq.Util.prefixWithZeroes;
 
 import java.io.File;
@@ -22,6 +23,8 @@ import io.reactivex.schedulers.Schedulers;
 
 public final class EmbeddedQueue {
 
+    private static final int CHECKSUM_NUM_BYTES = 8;
+    private static final int LENGTH_NUM_BYTES = 4;
     private final SimplePlainQueue<Object> queue;
     private final Store store;
     private final AtomicInteger wip = new AtomicInteger();
@@ -53,16 +56,9 @@ public final class EmbeddedQueue {
         if (store.writer.segment == null) {
             AddSegment addSegment = requestCreateSegment();
             drain();
-            try {
-                boolean added = addSegment.latch.await(addSegmentMaxWaitTimeMs, TimeUnit.MILLISECONDS);
-                if (!added) {
-                    throw new RuntimeException("could not create new segment");
-                }
-            } catch (InterruptedException e) {
-                throw new RuntimeException(e);
-            }
+            waitFor(addSegment);
         }
-        store.writer.segment.size += message.length + 4 + 8;
+        store.writer.segment.size += message.length + LENGTH_NUM_BYTES + CHECKSUM_NUM_BYTES;
         if (store.writer.segment.size > maxSegmentSize) {
             store.writer.segment.closeForWrite();
             requestCreateSegment();
@@ -71,6 +67,17 @@ public final class EmbeddedQueue {
         queue.offer(store.writer.segment);
         drain();
         return true;
+    }
+
+    private void waitFor(AddSegment addSegment) {
+        try {
+            boolean added = addSegment.latch.await(addSegmentMaxWaitTimeMs, TimeUnit.MILLISECONDS);
+            if (!added) {
+                throw new RuntimeException("could not create new segment");
+            }
+        } catch (InterruptedException e) {
+            throw new RuntimeException(e);
+        }
     }
 
     private AddSegment requestCreateSegment() {
@@ -119,6 +126,7 @@ public final class EmbeddedQueue {
                     if (o instanceof AddReader) {
                         Reader r = ((AddReader) o).reader;
                         store.add(r);
+                        r.scheduleRead();
                     } else if (o instanceof Reader) {
                         // handle request
                         ((Reader) o).scheduleRead();
@@ -225,10 +233,12 @@ public final class EmbeddedQueue {
                 long position = f.getFilePointer();
                 f.write(message);
                 f.writeLong(crc.getValue());
-                f.writeInt(LENGTH_ZERO);
-                long position2 = f.getFilePointer();
                 synchronized (this) {
-                    f.seek(position - 4);
+                    f.writeInt(LENGTH_ZERO);
+                }
+                long position2 = f.getFilePointer();
+                f.seek(position - LENGTH_NUM_BYTES);
+                synchronized (this) {
                     f.writeInt(message.length);
                 }
                 // get position ready for next write (just after length bytes)
@@ -241,7 +251,7 @@ public final class EmbeddedQueue {
         void closeForWrite() {
             if (f != null) {
                 try {
-                    f.seek(f.getFilePointer() - 4);
+                    f.seek(f.getFilePointer() - LENGTH_NUM_BYTES);
                     f.writeInt(EOF);
                     f.close();
                     f = null;
@@ -249,6 +259,64 @@ public final class EmbeddedQueue {
                     throw new IORuntimeException(e);
                 }
             }
+        }
+
+        private byte[] message = new byte[0];
+
+        public boolean read(AtomicLong requested, long batchSize, OutputStream out) {
+            if (f == null) {
+                return false;
+            } else {
+                long r = requested.get();
+                long e = 0;
+                try {
+                    while (e != r) {
+                        long startPosition = f.getFilePointer();
+                        int length = f.readInt();
+                        if (length == 0) {
+                            return false;
+                        } else if (length + f.getFilePointer() > f.length()) {
+                            reportError("message in file " + file + " at position " + startPosition
+                                    + " is longer than the length of the file");
+                            advanceToNextFile();
+                            return true;
+                        } else {
+                            // TODO use same buffer for smaller messages too
+                            if (message.length != length) {
+                                message = new byte[length];
+                                // blocks
+                                f.readFully(message);
+                                long expected = f.readLong();
+                                CRC32 crc = new CRC32();
+                                crc.update(message);
+                                if (crc.getValue() != expected) {
+                                    reportError("crc doesn't match for message in file " + file
+                                            + " at position " + startPosition);
+                                } else {
+                                    out.write(Util.toBytes(length));
+                                    out.write(message);
+                                    e++;
+                                }
+                            }
+                        }
+                        if (e == batchSize) {
+                            return true;
+                        }
+                    }
+                    return false;
+                } catch (IOException ex) {
+                    throw new IORuntimeException(ex);
+                }
+            }
+        }
+
+        private void reportError(String message) {
+            System.err.println(message);
+        }
+
+        private void advanceToNextFile() {
+            // TODO Auto-generated method stub
+
         }
     }
 
@@ -263,6 +331,8 @@ public final class EmbeddedQueue {
         private final long since;
         private final OutputStream out;
         private final EmbeddedQueue eq;
+        private final long batchSize;
+
         private final AtomicBoolean once = new AtomicBoolean(false);
         private final Worker readWorker = Schedulers.io().createWorker();
         private final AtomicLong requested = new AtomicLong();
@@ -271,14 +341,21 @@ public final class EmbeddedQueue {
         // mutable, synchronized by EmbeddedQueue.wip
         ReaderStatus status;
 
-        public Reader(long since, OutputStream out, EmbeddedQueue eq) {
+        public Reader(long since, OutputStream out, EmbeddedQueue eq, long batchSize) {
             this.since = since;
             this.out = out;
             this.eq = eq;
+            this.batchSize = batchSize;
         }
 
         void read() {
-
+            if (segment == null) {
+                return;
+            } else {
+                if (segment.read(requested, batchSize, out)) {
+                    eq.requestArrived(this);
+                }
+            }
         }
 
         void scheduleRead() {
@@ -295,24 +372,6 @@ public final class EmbeddedQueue {
 
             // indicate that requests exist
             eq.requestArrived(this);
-        }
-
-        private static void addRequest(AtomicLong requested, long n) {
-            // CAS loop
-            while (true) {
-                long r = requested.get();
-                if (r == Long.MAX_VALUE) {
-                    break;
-                } else {
-                    long r2 = r + n;
-                    if (r2 < 0) {
-                        r2 = Long.MAX_VALUE;
-                    }
-                    if (requested.compareAndSet(r, r2)) {
-                        break;
-                    }
-                }
-            }
         }
 
         public void cancel() {
