@@ -12,7 +12,7 @@ import org.junit.Test;
 public class EmbeddedQueueTest {
 
     @Test
-    public void test() throws IOException {
+    public void test() throws IOException, InterruptedException {
         Path directory = Files.createTempDirectory(new File("target").toPath(), "test");
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         EmbeddedQueue q = new EmbeddedQueue(directory.toFile(), 100, 30000, 2);
@@ -20,7 +20,9 @@ public class EmbeddedQueueTest {
         reader.start();
         q.addMessage(0, "boo".getBytes());
         q.addMessage(1, "you".getBytes());
+        reader.request(5);
         System.out.println(out.toString());
+        Thread.sleep(1000);
     }
 
 }

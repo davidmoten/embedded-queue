@@ -19,12 +19,17 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.zip.CRC32;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import io.reactivex.Scheduler.Worker;
 import io.reactivex.internal.fuseable.SimplePlainQueue;
 import io.reactivex.internal.queue.MpscLinkedQueue;
 import io.reactivex.schedulers.Schedulers;
 
 public final class EmbeddedQueue {
+
+    private static final Logger log = LoggerFactory.getLogger(EmbeddedQueue.class);
 
     private static final int CHECKSUM_NUM_BYTES = 8;
     private static final int LENGTH_NUM_BYTES = 4;
@@ -57,15 +62,16 @@ public final class EmbeddedQueue {
     }
 
     public boolean addMessage(long time, byte[] message) {
+        log.info("adding message");
         if (store.writer.segment == null) {
-            RequestAddSegment addSegment = requestCreateSegment();
+            RequestAddSegment addSegment = createRequestAddSegment();
             drain();
             waitFor(addSegment);
         }
         store.writer.segment.size += message.length + LENGTH_NUM_BYTES + CHECKSUM_NUM_BYTES;
         if (store.writer.segment.size > maxSegmentSize) {
             store.writer.segment.closeForWrite();
-            requestCreateSegment();
+            createRequestAddSegment();
         }
         store.writer.segment.write(time, message);
         queue.offer(store.writer.segment);
@@ -86,7 +92,7 @@ public final class EmbeddedQueue {
         }
     }
 
-    void requestArrived(Reader reader) {
+    void attemptRead(Reader reader) {
         queue.offer(reader);
         drain();
     }
@@ -96,7 +102,7 @@ public final class EmbeddedQueue {
         drain();
     }
 
-    private RequestAddSegment requestCreateSegment() {
+    private RequestAddSegment createRequestAddSegment() {
         Segment segment = createSegment();
         store.writer.segment = segment;
         RequestAddSegment addSegment = new RequestAddSegment(segment);
@@ -126,10 +132,12 @@ public final class EmbeddedQueue {
 
     void drain() {
         if (wip.getAndIncrement() == 0) {
+            log.info("draining");
             int missed = 1;
             while (true) {
                 Object o;
                 while ((o = queue.poll()) != null) {
+                    log.info("event {}", o);
                     if (o instanceof RequestAddReader) {
                         Reader r = ((RequestAddReader) o).reader;
                         store.add(r);
@@ -140,10 +148,11 @@ public final class EmbeddedQueue {
                     } else if (o instanceof RequestAddSegment) {
                         RequestAddSegment add = (RequestAddSegment) o;
                         store.segments.add(add.segment);
+                        log.info("added segment {}", add.segment.file.getName());
                         add.latch.countDown();
                     } else if (o instanceof Segment) {
                         for (Reader reader : store.readers) {
-                            if (o == reader.segment) {
+                            if (reader.segment == null || o == reader.segment) {
                                 reader.scheduleRead();
                             }
                         }
@@ -205,7 +214,7 @@ public final class EmbeddedQueue {
         final File index;
         int size;
 
-        RandomAccessFile writeFile;
+        RandomAccessFile w;
 
         Segment(File file, File index) {
             this.file = file;
@@ -215,37 +224,39 @@ public final class EmbeddedQueue {
         // called only by write thread (singleton)
         void write(long time, byte[] message) {
             try {
-                if (writeFile == null) {
-                    writeFile = new RandomAccessFile(file, READ_WRITE);
-                    writeFile.writeInt(LENGTH_ZERO);
+                if (w == null) {
+                    w = new RandomAccessFile(file, READ_WRITE);
+                    w.writeInt(LENGTH_ZERO);
                 }
                 CRC32 crc = new CRC32();
                 crc.update(message);
-                long position = writeFile.getFilePointer();
-                writeFile.write(message);
-                writeFile.writeLong(crc.getValue());
+                long position = w.getFilePointer();
+                w.write(message);
+                w.writeLong(crc.getValue());
                 synchronized (this) {
-                    writeFile.writeInt(LENGTH_ZERO);
+                    w.writeInt(LENGTH_ZERO);
                 }
-                long position2 = writeFile.getFilePointer();
-                writeFile.seek(position - LENGTH_NUM_BYTES);
+                long position2 = w.getFilePointer();
+                w.seek(position - LENGTH_NUM_BYTES);
                 synchronized (this) {
-                    writeFile.writeInt(message.length);
+                    w.writeInt(message.length);
                 }
                 // get position ready for next write (just after length bytes)
-                writeFile.seek(position2);
+                w.seek(position2);
+                w.getFD().sync();
+                log.info("message written");
             } catch (IOException e) {
                 throw new IORuntimeException(e);
             }
         }
 
         void closeForWrite() {
-            if (writeFile != null) {
+            if (w != null) {
                 try {
-                    writeFile.seek(writeFile.getFilePointer() - LENGTH_NUM_BYTES);
-                    writeFile.writeInt(EOF);
-                    writeFile.close();
-                    writeFile = null;
+                    w.seek(w.getFilePointer() - LENGTH_NUM_BYTES);
+                    w.writeInt(EOF);
+                    w.close();
+                    w = null;
                 } catch (IOException e) {
                     throw new IORuntimeException(e);
                 }
@@ -281,10 +292,15 @@ public final class EmbeddedQueue {
         }
 
         void read() {
+            log.info("reading");
             if (segment == null) {
+                log.info("segment is null, requesting next");
+                eq.nextSegment(this, segment);
+                eq.attemptRead(this);
                 return;
             } else {
                 if (f == null) {
+                    log.info("creating RandomAccessFile for {}", segment.file);
                     try {
                         f = new RandomAccessFile(segment.file, "rw");
                     } catch (FileNotFoundException e) {
@@ -294,7 +310,7 @@ public final class EmbeddedQueue {
                 if (!read(requested, batchSize, out)) {
                     // there may be more messages waiting so try again but it should be scheduled so
                     // that other readers can get a turn to emit
-                    eq.requestArrived(this);
+                    eq.attemptRead(this);
                 }
             }
         }
@@ -398,7 +414,7 @@ public final class EmbeddedQueue {
             addRequest(requested, n);
 
             // indicate that requests exist
-            eq.requestArrived(this);
+            eq.attemptRead(this);
         }
 
         public void cancel() {
