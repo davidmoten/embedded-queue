@@ -1,7 +1,6 @@
 package org.davidmoten.eq;
 
 import static org.davidmoten.eq.Util.prefixWithZeroes;
-import static org.davidmoten.eq.Util.toBytes;
 
 import java.io.File;
 import java.io.IOException;
