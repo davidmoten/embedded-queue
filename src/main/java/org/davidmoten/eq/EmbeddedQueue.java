@@ -223,19 +223,19 @@ public final class EmbeddedQueue {
 
         // called only by write thread (singleton)
         void write(long time, byte[] message) {
+            CRC32 crc = new CRC32();
+            crc.update(message);
             try {
                 if (w == null) {
                     w = new RandomAccessFile(file, READ_WRITE);
-                    w.writeInt(LENGTH_ZERO);
+                    synchronized (this) {
+                        w.writeInt(LENGTH_ZERO);
+                    }
                 }
-                CRC32 crc = new CRC32();
-                crc.update(message);
                 long position = w.getFilePointer();
                 w.write(message);
                 w.writeLong(crc.getValue());
-                synchronized (this) {
-                    w.writeInt(LENGTH_ZERO);
-                }
+                w.writeInt(LENGTH_ZERO);
                 long position2 = w.getFilePointer();
                 w.seek(position - LENGTH_NUM_BYTES);
                 synchronized (this) {
@@ -243,7 +243,6 @@ public final class EmbeddedQueue {
                 }
                 // get position ready for next write (just after length bytes)
                 w.seek(position2);
-                w.getFD().sync();
                 log.info("message written");
             } catch (IOException e) {
                 throw new IORuntimeException(e);
@@ -303,7 +302,8 @@ public final class EmbeddedQueue {
                     log.info("creating RandomAccessFile for {}", segment.file);
                     try {
                         f = new RandomAccessFile(segment.file, "rw");
-                    } catch (FileNotFoundException e) {
+                        f.seek(0);
+                    } catch (IOException e) {
                         throw new IORuntimeException(e);
                     }
                 }
@@ -341,7 +341,10 @@ public final class EmbeddedQueue {
                 try {
                     while (e != r) {
                         long startPosition = f.getFilePointer();
-                        int length = f.readInt();
+                        int length;
+                        synchronized (segment) {
+                            length = f.readInt();
+                        }
                         if (length == LENGTH_ZERO) {
                             return true;
                         }
