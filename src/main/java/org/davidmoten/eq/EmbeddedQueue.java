@@ -4,6 +4,7 @@ import static org.davidmoten.eq.Util.addRequest;
 import static org.davidmoten.eq.Util.prefixWithZeroes;
 
 import java.io.File;
+import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.io.RandomAccessFile;
@@ -214,7 +215,7 @@ public final class EmbeddedQueue {
         final File index;
         int size;
 
-        RandomAccessFile f;
+        RandomAccessFile writeFile;
 
         Segment(File file, File index) {
             this.file = file;
@@ -224,100 +225,43 @@ public final class EmbeddedQueue {
         // called only by write thread (singleton)
         void write(long time, byte[] message) {
             try {
-                if (f == null) {
-                    f = new RandomAccessFile(file, READ_WRITE);
-                    f.writeInt(LENGTH_ZERO);
+                if (writeFile == null) {
+                    writeFile = new RandomAccessFile(file, READ_WRITE);
+                    writeFile.writeInt(LENGTH_ZERO);
                 }
                 CRC32 crc = new CRC32();
                 crc.update(message);
-                long position = f.getFilePointer();
-                f.write(message);
-                f.writeLong(crc.getValue());
+                long position = writeFile.getFilePointer();
+                writeFile.write(message);
+                writeFile.writeLong(crc.getValue());
                 synchronized (this) {
-                    f.writeInt(LENGTH_ZERO);
+                    writeFile.writeInt(LENGTH_ZERO);
                 }
-                long position2 = f.getFilePointer();
-                f.seek(position - LENGTH_NUM_BYTES);
+                long position2 = writeFile.getFilePointer();
+                writeFile.seek(position - LENGTH_NUM_BYTES);
                 synchronized (this) {
-                    f.writeInt(message.length);
+                    writeFile.writeInt(message.length);
                 }
                 // get position ready for next write (just after length bytes)
-                f.seek(position2);
+                writeFile.seek(position2);
             } catch (IOException e) {
                 throw new IORuntimeException(e);
             }
         }
 
         void closeForWrite() {
-            if (f != null) {
+            if (writeFile != null) {
                 try {
-                    f.seek(f.getFilePointer() - LENGTH_NUM_BYTES);
-                    f.writeInt(EOF);
-                    f.close();
-                    f = null;
+                    writeFile.seek(writeFile.getFilePointer() - LENGTH_NUM_BYTES);
+                    writeFile.writeInt(EOF);
+                    writeFile.close();
+                    writeFile = null;
                 } catch (IOException e) {
                     throw new IORuntimeException(e);
                 }
             }
         }
 
-        private byte[] message = new byte[0];
-
-        public boolean read(AtomicLong requested, long batchSize, OutputStream out) {
-            if (f == null) {
-                return false;
-            } else {
-                long r = requested.get();
-                long e = 0;
-                try {
-                    while (e != r) {
-                        long startPosition = f.getFilePointer();
-                        int length = f.readInt();
-                        if (length == 0) {
-                            return false;
-                        } else if (length + f.getFilePointer() > f.length()) {
-                            reportError("message in file " + file + " at position " + startPosition
-                                    + " is longer than the length of the file");
-                            advanceToNextFile();
-                            return true;
-                        } else {
-                            // TODO use same buffer for smaller messages too
-                            if (message.length != length) {
-                                message = new byte[length];
-                                // blocks
-                                f.readFully(message);
-                                long expected = f.readLong();
-                                CRC32 crc = new CRC32();
-                                crc.update(message);
-                                if (crc.getValue() != expected) {
-                                    reportError("crc doesn't match for message in file " + file
-                                            + " at position " + startPosition);
-                                } else {
-                                    out.write(Util.toBytes(length));
-                                    out.write(message);
-                                    e++;
-                                }
-                            }
-                        }
-                        if (e == batchSize) {
-                            return true;
-                        }
-                    }
-                    return false;
-                } catch (IOException ex) {
-                    throw new IORuntimeException(ex);
-                }
-            }
-        }
-
-        private void reportError(String message) {
-            System.err.println(message);
-        }
-
-        private void advanceToNextFile() {
-            // TODO Auto-generated method stub
-
-        }
     }
 
     enum ReaderStatus {
@@ -338,8 +282,8 @@ public final class EmbeddedQueue {
         private final AtomicLong requested = new AtomicLong();
         Segment segment;
 
-        // mutable, synchronized by EmbeddedQueue.wip
-        ReaderStatus status;
+        // synchronized by wip
+        private RandomAccessFile f;
 
         public Reader(long since, OutputStream out, EmbeddedQueue eq, long batchSize) {
             this.since = since;
@@ -352,10 +296,94 @@ public final class EmbeddedQueue {
             if (segment == null) {
                 return;
             } else {
-                if (segment.read(requested, batchSize, out)) {
+                if (f == null) {
+                    try {
+                        f = new RandomAccessFile(segment.file, "rw");
+                    } catch (FileNotFoundException e) {
+                        throw new IORuntimeException(e);
+                    }
+                }
+                if (!read(requested, batchSize, out)) {
+                    // there may be more messages waiting so try again but it should be scheduled so
+                    // that other readers can get a turn to emit
                     eq.requestArrived(this);
                 }
             }
+        }
+
+        private byte[] message = new byte[0];
+
+        /**
+         * Returns true if and only if no more messages were found or if batchSize was
+         * reached in terms of attempted emissions to the {@code OutputStream}.
+         * Attempted emissions include messages that were determined not to be valid
+         * (due to length exceeding available bytes in the file or an unexpected CRC
+         * checksum).
+         * 
+         * @param requested
+         * @param batchSize
+         * @param out
+         * @return
+         */
+        boolean read(AtomicLong requested, long batchSize, OutputStream out) {
+            if (f == null) {
+                return true;
+            } else {
+                long r = requested.get();
+                long e = 0;
+                long attempts = 0;
+                boolean result = false;
+                try {
+                    while (e != r) {
+                        long startPosition = f.getFilePointer();
+                        int length = f.readInt();
+                        if (length == 0) {
+                            return true;
+                        } else if (length + f.getFilePointer() > f.length()) {
+                            reportError("message in file " + segment.file + " at position "
+                                    + startPosition + " is longer than the length of the file");
+                            advanceToNextFile();
+                            result = false;
+                            break;
+                        } else {
+                            // TODO use same buffer for smaller messages too
+                            if (message.length != length) {
+                                message = new byte[length];
+                            }
+                            // blocks
+                            f.readFully(message);
+                            long expected = f.readLong();
+                            CRC32 crc = new CRC32();
+                            crc.update(message);
+                            if (crc.getValue() != expected) {
+                                reportError("crc doesn't match for message in file " + segment.file
+                                        + " at position " + startPosition);
+                            } else {
+                                out.write(Util.toBytes(length));
+                                out.write(message);
+                                e++;
+                            }
+                            attempts++;
+                        }
+                        if (attempts == batchSize) {
+                            result = true;
+                            break;
+                        }
+                    }
+                    Util.addRequest(requested, -e);
+                    return result;
+                } catch (IOException ex) {
+                    throw new IORuntimeException(ex);
+                }
+            }
+        }
+
+        private void reportError(String message) {
+            System.err.println(message);
+        }
+
+        private void advanceToNextFile() {
+//TODO
         }
 
         void scheduleRead() {
@@ -383,6 +411,17 @@ public final class EmbeddedQueue {
                 eq.addReader(this);
             }
         }
+    }
+
+    static final class NextSegment {
+        final Segment segment;
+        final Reader reader;
+
+        NextSegment(Segment segment, Reader reader) {
+            this.segment = segment;
+            this.reader = reader;
+        }
+
     }
 
 }
