@@ -93,6 +93,7 @@ public final class EmbeddedQueue {
 
     void nextSegment(Reader reader, Segment segment) {
         queue.offer(new RequestNextSegment(reader, segment));
+        drain();
     }
 
     private RequestAddSegment requestCreateSegment() {
@@ -147,11 +148,18 @@ public final class EmbeddedQueue {
                             }
                         }
                     } else if (o instanceof RequestNextSegment) {
-                        RequestNextSegment r = (RequestNextSegment) o;
-                        Segment nextSegment = nextItem(store.segments, r.segment);
-                        if (nextSegment != null) {
-                            r.reader.segment = nextSegment;
-                            r.reader.scheduleRead();
+                        if (store.segments.size() > 0) {
+                            RequestNextSegment r = (RequestNextSegment) o;
+                            Segment nextSegment;
+                            if (r.segment == null) {
+                                nextSegment = store.segments.get(0);
+                            } else {
+                                nextSegment = nextItem(store.segments, r.segment);
+                            }
+                            if (nextSegment != null) {
+                                r.reader.segment = nextSegment;
+                                r.reader.scheduleRead();
+                            }
                         }
                     }
                 }
@@ -248,6 +256,7 @@ public final class EmbeddedQueue {
 
     public static final class Reader {
 
+        // TODO use since to lookup index
         private final long since;
         private final OutputStream out;
 
@@ -290,6 +299,7 @@ public final class EmbeddedQueue {
             }
         }
 
+        // cached message bytes particularly useful if message length is always the same
         private byte[] message = new byte[0];
 
         /**
