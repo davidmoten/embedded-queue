@@ -15,7 +15,7 @@ public class EmbeddedQueueTest {
     public void test() throws IOException {
         Path directory = Files.createTempDirectory(new File("target").toPath(), "test");
         ByteArrayOutputStream out = new ByteArrayOutputStream();
-        EmbeddedQueue q = new EmbeddedQueue(directory.toFile(), 100, 30000);
+        EmbeddedQueue q = new EmbeddedQueue(directory.toFile(), 100, 30000, 2);
         Reader reader = q.addReader(0, out);
         reader.start();
         q.addMessage(0, "boo".getBytes());

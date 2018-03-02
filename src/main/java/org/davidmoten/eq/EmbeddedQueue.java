@@ -1,6 +1,7 @@
 package org.davidmoten.eq;
 
 import static org.davidmoten.eq.Util.addRequest;
+import static org.davidmoten.eq.Util.closeQuietly;
 import static org.davidmoten.eq.Util.prefixWithZeroes;
 
 import java.io.File;
@@ -17,6 +18,8 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.zip.CRC32;
 
+import javax.print.DocFlavor.READER;
+
 import io.reactivex.Scheduler.Worker;
 import io.reactivex.internal.fuseable.SimplePlainQueue;
 import io.reactivex.internal.queue.MpscLinkedQueue;
@@ -32,25 +35,22 @@ public final class EmbeddedQueue {
     private final File directory;
     private final int maxSegmentSize;
     private final long addSegmentMaxWaitTimeMs;
+    private final int batchSize;
 
     // only used by write thread
     private int fileNumber;
 
-    public EmbeddedQueue(File directory, int maxSegmentSize, long addSegmentMaxWaitTimeMs) {
+    public EmbeddedQueue(File directory, int maxSegmentSize, long addSegmentMaxWaitTimeMs, int batchSize) {
         this.directory = directory;
         this.maxSegmentSize = maxSegmentSize;
         this.addSegmentMaxWaitTimeMs = addSegmentMaxWaitTimeMs;
+        this.batchSize = batchSize;
         this.queue = new MpscLinkedQueue<>();
         this.store = new Store();
     }
 
-    public void requestArrived(Reader reader) {
-        queue.offer(reader);
-        drain();
-    }
-
     public Reader addReader(long since, OutputStream out) {
-        return new Reader(since, out, this);
+        return new Reader(since, out, this, batchSize);
     }
 
     public boolean addMessage(long time, byte[] message) {
@@ -79,6 +79,15 @@ public final class EmbeddedQueue {
         } catch (InterruptedException e) {
             throw new RuntimeException(e);
         }
+    }
+
+    void requestArrived(Reader reader) {
+        queue.offer(reader);
+        drain();
+    }
+
+    void nextSegment(Reader reader, Segment segment) {
+        queue.offer(new NextSegment(reader, segment));
     }
 
     private AddSegment requestCreateSegment() {
@@ -135,12 +144,18 @@ public final class EmbeddedQueue {
                         AddSegment add = (AddSegment) o;
                         store.segments.add(add.segment);
                         add.latch.countDown();
-                    }
-                    if (o instanceof Segment) {
+                    } else if (o instanceof Segment) {
                         for (Reader reader : store.readers) {
                             if (o == reader.segment) {
                                 reader.scheduleRead();
                             }
+                        }
+                    } else if (o instanceof NextSegment) {
+                        NextSegment ns = (NextSegment) o;
+                        int i = store.segments.indexOf(ns.segment);
+                        if (i < store.segments.size() - 1) {
+                            ns.reader.segment = store.segments.get(i + 1);
+                            ns.reader.scheduleRead();
                         }
                     }
                 }
@@ -280,6 +295,7 @@ public final class EmbeddedQueue {
         private final AtomicBoolean once = new AtomicBoolean(false);
         private final Worker readWorker = Schedulers.io().createWorker();
         private final AtomicLong requested = new AtomicLong();
+
         Segment segment;
 
         // synchronized by wip
@@ -383,7 +399,10 @@ public final class EmbeddedQueue {
         }
 
         private void advanceToNextFile() {
-//TODO
+            Segment seg = segment;
+            segment = null;
+            closeQuietly(f);
+            eq.nextSegment(this, seg);
         }
 
         void scheduleRead() {
@@ -417,7 +436,7 @@ public final class EmbeddedQueue {
         final Segment segment;
         final Reader reader;
 
-        NextSegment(Segment segment, Reader reader) {
+        NextSegment(Reader reader, Segment segment) {
             this.segment = segment;
             this.reader = reader;
         }
