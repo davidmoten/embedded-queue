@@ -250,11 +250,13 @@ public final class EmbeddedQueue {
 
         private final long since;
         private final OutputStream out;
-        private final EmbeddedQueue eq;
+
+        // not final so can set to null for GC and avoid
+        private EmbeddedQueue eq;
         private final long batchSize;
 
         private final AtomicBoolean once = new AtomicBoolean(false);
-        private final Worker readWorker = Schedulers.io().createWorker();
+        private final Worker worker = Schedulers.io().createWorker();
         private final AtomicLong requested = new AtomicLong();
 
         Segment segment;
@@ -355,6 +357,7 @@ public final class EmbeddedQueue {
                     Util.addRequest(requested, -e);
                     return result;
                 } catch (IOException ex) {
+                    cancel();
                     throw new IORuntimeException(ex);
                 }
             }
@@ -368,11 +371,12 @@ public final class EmbeddedQueue {
             Segment seg = segment;
             segment = null;
             closeQuietly(f);
+            f = null;
             eq.nextSegment(this, seg);
         }
 
         void scheduleRead() {
-            readWorker.schedule(() -> {
+            worker.schedule(() -> {
                 read();
             });
         }
@@ -388,7 +392,9 @@ public final class EmbeddedQueue {
         }
 
         public void cancel() {
-            // TODO
+            worker.dispose();
+            // set to null to help gc of long-lived reference
+            eq = null;
         }
 
         public void start() {
