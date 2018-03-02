@@ -14,6 +14,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.zip.CRC32;
 
 import io.reactivex.Scheduler.Worker;
 import io.reactivex.internal.fuseable.SimplePlainQueue;
@@ -21,8 +22,6 @@ import io.reactivex.internal.queue.MpscLinkedQueue;
 import io.reactivex.schedulers.Schedulers;
 
 public final class EmbeddedQueue {
-
-    private static final byte[] ZERO_BYTES = toBytes(0);
 
     private final SimplePlainQueue<Object> queue;
     private final Store store;
@@ -65,6 +64,7 @@ public final class EmbeddedQueue {
         }
         store.writer.segment.size += message.length + 4 + 8;
         if (store.writer.segment.size > maxSegmentSize) {
+            store.writer.segment.closeForWrite();
             requestCreateSegment();
         }
         store.writer.segment.write(time, message);
@@ -191,6 +191,9 @@ public final class EmbeddedQueue {
     static final class Segment {
         private static final String READ_WRITE = "rw";
 
+        private static final int LENGTH_ZERO = 0;
+        private static final int EOF = -1;
+
         final File file;
         final File index;
         int size;
@@ -203,12 +206,38 @@ public final class EmbeddedQueue {
         }
 
         // called only by write thread (singleton)
-        public void write(long time, byte[] message) {
-            if (f == null) {
-                try {
+        void write(long time, byte[] message) {
+            try {
+                if (f == null) {
                     f = new RandomAccessFile(file, READ_WRITE);
-                    f.seek(0);
-                    f.write(ZERO_BYTES, size, size);
+                    f.writeInt(LENGTH_ZERO);
+                }
+                CRC32 crc = new CRC32();
+                crc.update(message);
+                long position = f.getFilePointer();
+                f.write(message);
+                f.writeLong(crc.getValue());
+                f.writeInt(LENGTH_ZERO);
+                long position2 = f.getFilePointer();
+                synchronized (this) {
+                    f.seek(position - 4);
+                    f.writeInt(message.length);
+                }
+                // get position ready for next write (just after length bytes)
+                f.seek(position2);
+            } catch (IOException e) {
+                throw new IORuntimeException(e);
+            }
+
+        }
+
+        void closeForWrite() {
+            if (f != null) {
+                try {
+                    f.seek(f.getFilePointer() - 4);
+                    f.writeInt(EOF);
+                    f.close();
+                    f = null;
                 } catch (IOException e) {
                     throw new IORuntimeException(e);
                 }
