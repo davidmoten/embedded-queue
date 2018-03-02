@@ -52,6 +52,7 @@ public final class EmbeddedQueue {
     public boolean addMessage(long time, byte[] message) {
         if (store.writer.segment == null) {
             AddSegment addSegment = requestCreateSegment();
+            drain();
             try {
                 boolean added = addSegment.latch.await(addSegmentMaxWaitTimeMs, TimeUnit.MILLISECONDS);
                 if (!added) {
@@ -67,6 +68,8 @@ public final class EmbeddedQueue {
             requestCreateSegment();
         }
         store.writer.segment.write(time, message);
+        queue.offer(store.writer.segment);
+        drain();
         return true;
     }
 
@@ -75,7 +78,6 @@ public final class EmbeddedQueue {
         store.writer.segment = segment;
         AddSegment addSegment = new AddSegment(segment);
         queue.offer(addSegment);
-        drain();
         return addSegment;
     }
 
@@ -124,6 +126,13 @@ public final class EmbeddedQueue {
                         AddSegment add = (AddSegment) o;
                         store.segments.add(add.segment);
                         add.latch.countDown();
+                    }
+                    if (o instanceof Segment) {
+                        for (Reader reader : store.readers) {
+                            if (o == reader.segment) {
+                                reader.scheduleRead();
+                            }
+                        }
                     }
                 }
                 missed = wip.addAndGet(-missed);
@@ -227,7 +236,6 @@ public final class EmbeddedQueue {
             } catch (IOException e) {
                 throw new IORuntimeException(e);
             }
-
         }
 
         void closeForWrite() {
@@ -258,6 +266,7 @@ public final class EmbeddedQueue {
         private final AtomicBoolean once = new AtomicBoolean(false);
         private final Worker readWorker = Schedulers.io().createWorker();
         private final AtomicLong requested = new AtomicLong();
+        Segment segment;
 
         // mutable, synchronized by EmbeddedQueue.wip
         ReaderStatus status;
