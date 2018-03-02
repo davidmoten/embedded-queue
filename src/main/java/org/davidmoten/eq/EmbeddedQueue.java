@@ -1,7 +1,9 @@
 package org.davidmoten.eq;
 
 import java.io.File;
+import java.io.IOException;
 import java.io.OutputStream;
+import java.io.RandomAccessFile;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
@@ -16,6 +18,8 @@ import io.reactivex.internal.queue.MpscLinkedQueue;
 import io.reactivex.schedulers.Schedulers;
 
 public final class EmbeddedQueue {
+
+    private static final byte[] ZERO_BYTES = toBytes(0);
 
     private final SimplePlainQueue<Object> queue;
     private final Store store;
@@ -80,8 +84,16 @@ public final class EmbeddedQueue {
 
     private Segment createSegment() {
         fileNumber++;
-        File file = new File(directory, fileNumber + "");
-        File index = new File(directory, fileNumber + ".idx");
+        String num = prefixWithZeroes(fileNumber + "", 9);
+        File file = new File(directory, num);
+        File index = new File(directory, num + ".idx");
+        try {
+            file.getParentFile().mkdirs();
+            file.createNewFile();
+            index.createNewFile();
+        } catch (IOException e) {
+            throw new IORuntimeException(e);
+        }
         return new Segment(file, index);
     }
 
@@ -144,8 +156,13 @@ public final class EmbeddedQueue {
 
     static final class Store {
 
+        // not synchronized, should only be used by writing thread
         final Writer writer;
+
+        // synchronized by wip
         final List<Reader> readers;
+
+        // synchronized by wip
         final List<Segment> segments;
 
         Store() {
@@ -165,18 +182,30 @@ public final class EmbeddedQueue {
     }
 
     static final class Segment {
+        private static final String READ_WRITE = "rw";
+
         final File file;
         final File index;
         int size;
+
+        RandomAccessFile f;
 
         Segment(File file, File index) {
             this.file = file;
             this.index = index;
         }
 
+        // called only by write thread (singleton)
         public void write(long time, byte[] message) {
-            // TODO Auto-generated method stub
-
+            if (f == null) {
+                try {
+                    f = new RandomAccessFile(file, READ_WRITE);
+                    f.seek(0);
+                    f.write(ZERO_BYTES, size, size);
+                } catch (IOException e) {
+                    throw new IORuntimeException(e);
+                }
+            }
         }
     }
 
@@ -251,6 +280,66 @@ public final class EmbeddedQueue {
                 eq.addReader(this);
             }
         }
+    }
+
+    private static final byte[] toBytes(int value) {
+        return new byte[] { (byte) (value >>> 24), (byte) (value >>> 16), (byte) (value >>> 8), (byte) value };
+    }
+
+    public static byte[] toBytes(long l) {
+        byte[] result = new byte[8];
+        for (int i = 7; i >= 0; i--) {
+            result[i] = (byte) (l & 0xFF);
+            l >>= 8;
+        }
+        return result;
+    }
+
+    public static long toLong(byte[] b) {
+        long result = 0;
+        for (int i = 0; i < 8; i++) {
+            result <<= 8;
+            result |= (b[i] & 0xFF);
+        }
+        return result;
+    }
+
+    public static int toInt(byte[] bytes) {
+        int ret = 0;
+        for (int i = 0; i < 4 && i < bytes.length; i++) {
+            ret <<= 8;
+            ret |= (int) bytes[i] & 0xFF;
+        }
+        return ret;
+    }
+
+    private static void closeQuietly(RandomAccessFile f) {
+        if (f != null) {
+            try {
+                f.close();
+            } catch (IOException e) {
+                throw new IORuntimeException(e);
+            }
+        }
+    }
+
+    private static void closeQuietly(OutputStream out) {
+        if (out != null) {
+            try {
+                out.close();
+            } catch (IOException e) {
+                throw new IORuntimeException(e);
+            }
+        }
+    }
+
+    private static String prefixWithZeroes(String s, int length) {
+        StringBuilder b = new StringBuilder();
+        for (int i = s.length(); i <= length; i++) {
+            b.append("0");
+        }
+        b.append(s);
+        return b.toString();
     }
 
 }
