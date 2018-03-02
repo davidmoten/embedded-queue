@@ -2,6 +2,7 @@ package org.davidmoten.eq;
 
 import static org.davidmoten.eq.Util.addRequest;
 import static org.davidmoten.eq.Util.closeQuietly;
+import static org.davidmoten.eq.Util.nextItem;
 import static org.davidmoten.eq.Util.prefixWithZeroes;
 
 import java.io.File;
@@ -17,8 +18,6 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.zip.CRC32;
-
-import javax.print.DocFlavor.READER;
 
 import io.reactivex.Scheduler.Worker;
 import io.reactivex.internal.fuseable.SimplePlainQueue;
@@ -59,7 +58,7 @@ public final class EmbeddedQueue {
 
     public boolean addMessage(long time, byte[] message) {
         if (store.writer.segment == null) {
-            AddSegment addSegment = requestCreateSegment();
+            RequestAddSegment addSegment = requestCreateSegment();
             drain();
             waitFor(addSegment);
         }
@@ -74,7 +73,9 @@ public final class EmbeddedQueue {
         return true;
     }
 
-    private void waitFor(AddSegment addSegment) {
+    // END OF PUBLIC API
+
+    private void waitFor(RequestAddSegment addSegment) {
         try {
             boolean added = addSegment.latch.await(addSegmentMaxWaitTimeMs, TimeUnit.MILLISECONDS);
             if (!added) {
@@ -91,24 +92,15 @@ public final class EmbeddedQueue {
     }
 
     void nextSegment(Reader reader, Segment segment) {
-        queue.offer(new NextSegment(reader, segment));
+        queue.offer(new RequestNextSegment(reader, segment));
     }
 
-    private AddSegment requestCreateSegment() {
+    private RequestAddSegment requestCreateSegment() {
         Segment segment = createSegment();
         store.writer.segment = segment;
-        AddSegment addSegment = new AddSegment(segment);
+        RequestAddSegment addSegment = new RequestAddSegment(segment);
         queue.offer(addSegment);
         return addSegment;
-    }
-
-    static final class AddSegment {
-        final Segment segment;
-        final CountDownLatch latch = new CountDownLatch(1);
-
-        AddSegment(Segment segment) {
-            this.segment = segment;
-        }
     }
 
     private Segment createSegment() {
@@ -127,7 +119,7 @@ public final class EmbeddedQueue {
     }
 
     void addReader(Reader reader) {
-        queue.offer(new AddReader(reader));
+        queue.offer(new RequestAddReader(reader));
         drain();
     }
 
@@ -137,15 +129,15 @@ public final class EmbeddedQueue {
             while (true) {
                 Object o;
                 while ((o = queue.poll()) != null) {
-                    if (o instanceof AddReader) {
-                        Reader r = ((AddReader) o).reader;
+                    if (o instanceof RequestAddReader) {
+                        Reader r = ((RequestAddReader) o).reader;
                         store.add(r);
                         r.scheduleRead();
                     } else if (o instanceof Reader) {
                         // handle request
                         ((Reader) o).scheduleRead();
-                    } else if (o instanceof AddSegment) {
-                        AddSegment add = (AddSegment) o;
+                    } else if (o instanceof RequestAddSegment) {
+                        RequestAddSegment add = (RequestAddSegment) o;
                         store.segments.add(add.segment);
                         add.latch.countDown();
                     } else if (o instanceof Segment) {
@@ -154,12 +146,12 @@ public final class EmbeddedQueue {
                                 reader.scheduleRead();
                             }
                         }
-                    } else if (o instanceof NextSegment) {
-                        NextSegment ns = (NextSegment) o;
-                        int i = store.segments.indexOf(ns.segment);
-                        if (i < store.segments.size() - 1) {
-                            ns.reader.segment = store.segments.get(i + 1);
-                            ns.reader.scheduleRead();
+                    } else if (o instanceof RequestNextSegment) {
+                        RequestNextSegment r = (RequestNextSegment) o;
+                        Segment nextSegment = nextItem(store.segments, r.segment);
+                        if (nextSegment != null) {
+                            r.reader.segment = nextSegment;
+                            r.reader.scheduleRead();
                         }
                     }
                 }
@@ -169,32 +161,6 @@ public final class EmbeddedQueue {
                 }
             }
         }
-    }
-
-    static final class Message {
-
-        final long time;
-        final byte[] content;
-        final CountDownLatch latch = new CountDownLatch(1);
-
-        Message(long time, byte[] content) {
-            this.time = time;
-            this.content = content;
-        }
-
-        void markAsPersisted() {
-            latch.countDown();
-        }
-    }
-
-    static final class AddReader {
-
-        private final Reader reader;
-
-        AddReader(Reader reader) {
-            this.reader = reader;
-        }
-
     }
 
     static final class Store {
@@ -278,12 +244,6 @@ public final class EmbeddedQueue {
             }
         }
 
-    }
-
-    enum ReaderStatus {
-        NO_SEGMENT, //
-        ACCEPTING_READS, //
-        END_OF_SEGMENT;
     }
 
     public static final class Reader {
@@ -438,11 +398,29 @@ public final class EmbeddedQueue {
         }
     }
 
-    static final class NextSegment {
+    static final class RequestAddReader {
+
+        private final Reader reader;
+
+        RequestAddReader(Reader reader) {
+            this.reader = reader;
+        }
+    }
+
+    static final class RequestAddSegment {
+        final Segment segment;
+        final CountDownLatch latch = new CountDownLatch(1);
+
+        RequestAddSegment(Segment segment) {
+            this.segment = segment;
+        }
+    }
+
+    static final class RequestNextSegment {
         final Segment segment;
         final Reader reader;
 
-        NextSegment(Reader reader, Segment segment) {
+        RequestNextSegment(Reader reader, Segment segment) {
             this.segment = segment;
             this.reader = reader;
         }

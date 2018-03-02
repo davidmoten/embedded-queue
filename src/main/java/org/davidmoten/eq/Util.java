@@ -3,6 +3,7 @@ package org.davidmoten.eq;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.io.RandomAccessFile;
+import java.util.List;
 import java.util.concurrent.atomic.AtomicLong;
 
 class Util {
@@ -90,4 +91,14 @@ class Util {
         }
     }
 
+    static <T> T nextItem(List<T> list, T item) {
+        int i = list.indexOf(item);
+        if (i == -1) {
+            throw new RuntimeException("item not found in list!");
+        } else if (i == list.size() - 1) {
+            return null;
+        } else {
+            return list.get(i + 1);
+        }
+    }
 }
