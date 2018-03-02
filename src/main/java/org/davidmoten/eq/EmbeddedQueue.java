@@ -29,11 +29,15 @@ public final class EmbeddedQueue {
     private final AtomicInteger wip = new AtomicInteger();
     private final File directory;
     private final int maxSegmentSize;
+    private final long addSegmentMaxWaitTimeMs;
+
+    // only used by write thread
     private int fileNumber;
 
-    public EmbeddedQueue(File directory, int maxSegmentSize) {
+    public EmbeddedQueue(File directory, int maxSegmentSize, long addSegmentMaxWaitTimeMs) {
         this.directory = directory;
         this.maxSegmentSize = maxSegmentSize;
+        this.addSegmentMaxWaitTimeMs = addSegmentMaxWaitTimeMs;
         this.queue = new MpscLinkedQueue<>();
         this.store = new Store();
     }
@@ -51,7 +55,7 @@ public final class EmbeddedQueue {
         if (store.writer.segment == null) {
             AddSegment addSegment = requestCreateSegment();
             try {
-                boolean added = addSegment.latch.await(30, TimeUnit.SECONDS);
+                boolean added = addSegment.latch.await(addSegmentMaxWaitTimeMs, TimeUnit.MILLISECONDS);
                 if (!added) {
                     throw new RuntimeException("could not create new segment");
                 }
