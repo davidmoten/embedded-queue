@@ -6,7 +6,6 @@ import static org.davidmoten.eq.Util.nextItem;
 import static org.davidmoten.eq.Util.prefixWithZeroes;
 
 import java.io.File;
-import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.io.RandomAccessFile;
@@ -80,17 +79,6 @@ public final class EmbeddedQueue {
     }
 
     // END OF PUBLIC API
-
-    private void waitFor(RequestAddSegment addSegment) {
-        try {
-            boolean added = addSegment.latch.await(addSegmentMaxWaitTimeMs, TimeUnit.MILLISECONDS);
-            if (!added) {
-                throw new RuntimeException("could not create new segment");
-            }
-        } catch (InterruptedException e) {
-            throw new RuntimeException(e);
-        }
-    }
 
     void attemptRead(Reader reader) {
         queue.offer(reader);
@@ -316,7 +304,7 @@ public final class EmbeddedQueue {
         }
 
         // cached message bytes particularly useful if message length is always the same
-        private byte[] message = new byte[0];
+        private byte[] message;
 
         /**
          * Returns true if and only if no more messages were found or if batchSize was
@@ -362,7 +350,7 @@ public final class EmbeddedQueue {
                             break;
                         } else {
                             // TODO use same buffer for smaller messages too
-                            if (message.length != length) {
+                            if (message == null || message.length != length) {
                                 message = new byte[length];
                             }
                             // blocks
@@ -379,6 +367,7 @@ public final class EmbeddedQueue {
                                 e++;
                                 log.info("{} bytes written to output", message.length);
                             }
+                            // TODO release memory array by nulling if configured
                             attempts++;
                         }
                         if (attempts == batchSize) {
@@ -435,6 +424,19 @@ public final class EmbeddedQueue {
             }
         }
     }
+
+    private void waitFor(RequestAddSegment addSegment) {
+        try {
+            boolean added = addSegment.latch.await(addSegmentMaxWaitTimeMs, TimeUnit.MILLISECONDS);
+            if (!added) {
+                throw new RuntimeException("could not create new segment");
+            }
+        } catch (InterruptedException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    // Request classes
 
     static final class RequestAddReader {
 
