@@ -243,7 +243,7 @@ public final class EmbeddedQueue {
                 }
                 // get position ready for next write (just after length bytes)
                 w.seek(position2);
-                log.info("message written");
+                log.info("message written to " + file);
             } catch (IOException e) {
                 throw new IORuntimeException(e);
             }
@@ -334,6 +334,7 @@ public final class EmbeddedQueue {
             if (f == null) {
                 return true;
             } else {
+                log.info("reading from " + segment.file);
                 long r = requested.get();
                 long e = 0;
                 long attempts = 0;
@@ -346,6 +347,7 @@ public final class EmbeddedQueue {
                             length = f.readInt();
                         }
                         if (length == LENGTH_ZERO) {
+                            f.seek(startPosition);
                             return true;
                         }
                         if (length == EOF) {
@@ -375,6 +377,7 @@ public final class EmbeddedQueue {
                                 out.write(Util.toBytes(length));
                                 out.write(message);
                                 e++;
+                                log.info("{} bytes written to output", message.length);
                             }
                             attempts++;
                         }
