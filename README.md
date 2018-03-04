@@ -5,7 +5,8 @@ Features
 * supports backpressure
 * HTTP GET for consumer (long poll or short poll)
 * HTTP POST for request, cancel, put  
+* or duplex TCP instead of HTTP
 * writes (calls to `put`) must be serialized
 * supports multiple concurrent consumers
-* uses Kafka-like reads (give me all records since time t)
+* uses Kafka-like reads (give me all records since time t/offset)
 * 

@@ -139,6 +139,7 @@ public final class EmbeddedQueue {
                         log.info("added segment {}", add.segment.file.getName());
                         add.latch.countDown();
                     } else if (o instanceof Segment) {
+                        // segment has been written to so notify readers
                         for (Reader reader : store.readers) {
                             if (reader.segment == null || o == reader.segment) {
                                 reader.scheduleRead();
@@ -335,6 +336,7 @@ public final class EmbeddedQueue {
                             length = f.readInt();
                         }
                         if (length == LENGTH_ZERO) {
+                            //reset the read
                             f.seek(startPosition);
                             return true;
                         }
@@ -397,6 +399,10 @@ public final class EmbeddedQueue {
         }
 
         void scheduleRead() {
+            // TODO ensure that don't schedule too many reads
+            // don't want to blow out heap with queued tasks
+            // just because writing is happening faster than 
+            // reading
             worker.schedule(() -> {
                 read();
             });
