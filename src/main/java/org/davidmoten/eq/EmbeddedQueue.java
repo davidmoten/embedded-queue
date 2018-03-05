@@ -197,6 +197,8 @@ public final class EmbeddedQueue {
 
     public static final class Writer {
         Segment segment;
+        // the overall offset in number of bytes from the start of the first segment to
+        // the current write position
         long offset;
     }
 
