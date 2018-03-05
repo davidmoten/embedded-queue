@@ -64,15 +64,13 @@ public final class EmbeddedQueue {
     public boolean addMessage(long time, byte[] message) {
         log.info("adding message");
         if (store.writer.segment == null) {
-            RequestAddSegment addSegment = createRequestAddSegment();
-            drain();
-            waitFor(addSegment);
+            addAndWaitForSegment();
         }
         int numBytes = message.length + LENGTH_NUM_BYTES + OFFSET_NUM_BYTES + CHECKSUM_NUM_BYTES;
         store.writer.segment.size += numBytes;
-        if (store.writer.segment.size > maxSegmentSize) {
+        if (store.writer.segment.size >= maxSegmentSize) {
             store.writer.segment.closeForWrite();
-            createRequestAddSegment();
+            addAndWaitForSegment();
         }
         store.writer.segment.write(time, store.writer.offset, message);
         store.writer.offset += numBytes;
@@ -83,6 +81,13 @@ public final class EmbeddedQueue {
 
     // END OF PUBLIC API
 
+    private void addAndWaitForSegment() {
+        RequestAddSegment addSegment = createRequestAddSegment(store.writer.offset);
+        drain();
+        waitFor(addSegment);
+    }
+
+    
     void attemptRead(Reader reader) {
         queue.offer(reader);
         drain();
@@ -93,17 +98,16 @@ public final class EmbeddedQueue {
         drain();
     }
 
-    private RequestAddSegment createRequestAddSegment() {
-        Segment segment = createSegment();
+    private RequestAddSegment createRequestAddSegment(long offset) {
+        Segment segment = createSegment(offset);
         store.writer.segment = segment;
         RequestAddSegment addSegment = new RequestAddSegment(segment);
         queue.offer(addSegment);
         return addSegment;
     }
 
-    private Segment createSegment() {
-        fileNumber++;
-        String num = prefixWithZeroes(fileNumber + "", 9);
+    private Segment createSegment(long offset) {
+        String num = prefixWithZeroes(String.valueOf(offset), 16);
         File file = new File(directory, num);
         File index = new File(directory, num + ".idx");
         try {
@@ -122,6 +126,7 @@ public final class EmbeddedQueue {
     }
 
     void drain() {
+        // must be non-blocking
         if (wip.getAndIncrement() == 0) {
             log.info("draining");
             int missed = 1;
