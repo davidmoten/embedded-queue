@@ -34,6 +34,21 @@ public class EmbeddedQueueTest {
         assertEquals(30, out.bytes().length);
         assertEquals(Arrays.asList("boo", "you"), messages(out.bytes()));
     }
+    
+    @Test
+    public void testMultipleSegments() throws IOException, InterruptedException {
+        Path directory = Files.createTempDirectory(new File("target").toPath(), "test");
+        SynchronizedOutputStream out = new SynchronizedOutputStream();
+        EmbeddedQueue q = new EmbeddedQueue(directory.toFile(), 5, 30000, 2, 8192);
+        Reader reader = q.readFromOffset(0, out);
+        reader.start();
+        q.addMessage(0, "boo".getBytes());
+        q.addMessage(1, "you".getBytes());
+        reader.request(5);
+        Thread.sleep(500);
+        assertEquals(Arrays.asList("boo", "you"), messages(out.bytes()));
+        assertEquals(30, out.bytes().length);
+    }
 
     private static List<String> messages(byte[] bytes) throws IOException {
         List<String> list = new ArrayList<>();
