@@ -30,6 +30,7 @@ public final class EmbeddedQueue {
 
     private static final Logger log = LoggerFactory.getLogger(EmbeddedQueue.class);
 
+    private static final int OFFSET_NUM_BYTES = 8;
     private static final int CHECKSUM_NUM_BYTES = 8;
     private static final int LENGTH_NUM_BYTES = 4;
     private static final int LENGTH_ZERO = 0;
@@ -67,12 +68,14 @@ public final class EmbeddedQueue {
             drain();
             waitFor(addSegment);
         }
-        store.writer.segment.size += message.length + LENGTH_NUM_BYTES + CHECKSUM_NUM_BYTES;
+        int numBytes = message.length + LENGTH_NUM_BYTES + OFFSET_NUM_BYTES + CHECKSUM_NUM_BYTES;
+        store.writer.segment.size += numBytes;
         if (store.writer.segment.size > maxSegmentSize) {
             store.writer.segment.closeForWrite();
             createRequestAddSegment();
         }
-        store.writer.segment.write(time, message);
+        store.writer.segment.write(time, store.writer.offset, message);
+        store.writer.offset += numBytes;
         queue.offer(store.writer.segment);
         drain();
         return true;
@@ -194,6 +197,7 @@ public final class EmbeddedQueue {
 
     public static final class Writer {
         Segment segment;
+        long offset;
     }
 
     static final class Segment {
@@ -211,7 +215,7 @@ public final class EmbeddedQueue {
         }
 
         // called only by write thread (singleton)
-        void write(long time, byte[] message) {
+        void write(long time, long offset, byte[] message) {
             CRC32 crc = new CRC32();
             crc.update(message);
             try {
@@ -222,6 +226,7 @@ public final class EmbeddedQueue {
                     }
                 }
                 long position = w.getFilePointer();
+                w.writeLong(offset);
                 w.write(message);
                 w.writeLong(crc.getValue());
                 w.writeInt(LENGTH_ZERO);
@@ -297,8 +302,8 @@ public final class EmbeddedQueue {
                     }
                 }
                 if (!read(requested, batchSize, out)) {
-                    // there may be more messages waiting so try again but it should be scheduled so
-                    // that other readers can get a turn to emit
+                    // there may be more messages waiting (and there are sufficient requests) so try
+                    // again but it should be scheduled so that other readers can get a turn to emit
                     eq.attemptRead(this);
                 }
             }
@@ -336,7 +341,7 @@ public final class EmbeddedQueue {
                             length = f.readInt();
                         }
                         if (length == LENGTH_ZERO) {
-                            //reset the read
+                            // reset the read
                             f.seek(startPosition);
                             return true;
                         }
@@ -355,6 +360,7 @@ public final class EmbeddedQueue {
                             if (message == null || message.length != length) {
                                 message = new byte[length];
                             }
+                            long offset = f.readLong();
                             // blocks
                             f.readFully(message);
                             long expected = f.readLong();
@@ -365,6 +371,7 @@ public final class EmbeddedQueue {
                                         + " at position " + startPosition);
                             } else {
                                 out.write(Util.toBytes(length));
+                                out.write(Util.toBytes(offset));
                                 out.write(message);
                                 e++;
                                 log.info("{} bytes written to output", message.length);
@@ -401,7 +408,7 @@ public final class EmbeddedQueue {
         void scheduleRead() {
             // TODO ensure that don't schedule too many reads
             // don't want to blow out heap with queued tasks
-            // just because writing is happening faster than 
+            // just because writing is happening faster than
             // reading
             worker.schedule(() -> {
                 read();

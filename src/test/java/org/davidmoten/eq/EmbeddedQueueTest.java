@@ -31,7 +31,7 @@ public class EmbeddedQueueTest {
         q.addMessage(1, "you".getBytes());
         reader.request(5);
         Thread.sleep(500);
-        assertEquals(14, out.bytes().length);
+        assertEquals(30, out.bytes().length);
         assertEquals(Arrays.asList("boo", "you"), messages(out.bytes()));
     }
 
@@ -41,6 +41,8 @@ public class EmbeddedQueueTest {
         try {
             while (true) {
                 int length = d.readInt();
+                //read offset
+                d.readLong();
                 byte[] b = new byte[length];
                 d.readFully(b);
                 list.add(new String(b));
