@@ -11,6 +11,7 @@ import java.io.OutputStream;
 import java.io.RandomAccessFile;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -44,9 +45,6 @@ public final class EmbeddedQueue {
     private final long addSegmentMaxWaitTimeMs;
     private final int batchSize;
 
-    // only used by write thread
-    private int fileNumber;
-
     public EmbeddedQueue(File directory, int maxSegmentSize, long addSegmentMaxWaitTimeMs,
             int batchSize) {
         this.directory = directory;
@@ -57,8 +55,12 @@ public final class EmbeddedQueue {
         this.store = new Store();
     }
 
-    public Reader addReader(long since, OutputStream out) {
-        return new Reader(since, out, this, batchSize);
+    public Reader readSinceTime(long since, OutputStream out) {
+        return new Reader(Optional.of(since), Optional.empty(), out, this, batchSize);
+    }
+
+    public Reader readFromOffset(long offset, OutputStream out) {
+        return new Reader(Optional.empty(), Optional.of(offset), out, this, batchSize);
     }
 
     public boolean addMessage(long time, byte[] message) {
@@ -87,7 +89,6 @@ public final class EmbeddedQueue {
         waitFor(addSegment);
     }
 
-    
     void attemptRead(Reader reader) {
         queue.offer(reader);
         drain();
@@ -267,8 +268,9 @@ public final class EmbeddedQueue {
 
     public static final class Reader {
 
-        // TODO use since to lookup index
-        private final long since;
+        // TODO use since/offset to lookup index
+        private final Optional<Long> since;
+        private final Optional<Long> offset;
         private final OutputStream out;
 
         // not final so can set to null for GC and avoid
@@ -284,7 +286,9 @@ public final class EmbeddedQueue {
         // synchronized by wip
         private RandomAccessFile f;
 
-        public Reader(long since, OutputStream out, EmbeddedQueue eq, long batchSize) {
+        public Reader(Optional<Long> offset, Optional<Long> since, OutputStream out,
+                EmbeddedQueue eq, long batchSize) {
+            this.offset = offset;
             this.since = since;
             this.out = out;
             this.eq = eq;
@@ -303,7 +307,13 @@ public final class EmbeddedQueue {
                     log.info("creating RandomAccessFile for {}", segment.file);
                     try {
                         f = new RandomAccessFile(segment.file, "rw");
-                        f.seek(0);
+                        long segmentOffset = Long.valueOf(segment.file.getName());
+                        if (offset.isPresent()) {
+                            f.seek(offset.get() - segmentOffset);
+                        } else {
+                            // TODO search using time index
+                            f.seek(0);
+                        }
                     } catch (IOException e) {
                         throw new IORuntimeException(e);
                     }

@@ -25,7 +25,7 @@ public class EmbeddedQueueTest {
         Path directory = Files.createTempDirectory(new File("target").toPath(), "test");
         SynchronizedOutputStream out = new SynchronizedOutputStream();
         EmbeddedQueue q = new EmbeddedQueue(directory.toFile(), 100, 30000, 2);
-        Reader reader = q.addReader(0, out);
+        Reader reader = q.readFromOffset(0, out);
         reader.start();
         q.addMessage(0, "boo".getBytes());
         q.addMessage(1, "you".getBytes());
@@ -41,7 +41,7 @@ public class EmbeddedQueueTest {
         try {
             while (true) {
                 int length = d.readInt();
-                //read offset
+                // read offset
                 d.readLong();
                 byte[] b = new byte[length];
                 d.readFully(b);
