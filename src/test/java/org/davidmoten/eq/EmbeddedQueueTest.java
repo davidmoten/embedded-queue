@@ -24,7 +24,7 @@ public class EmbeddedQueueTest {
     public void test() throws IOException, InterruptedException {
         Path directory = Files.createTempDirectory(new File("target").toPath(), "test");
         SynchronizedOutputStream out = new SynchronizedOutputStream();
-        EmbeddedQueue q = new EmbeddedQueue(directory.toFile(), 100, 30000, 2);
+        EmbeddedQueue q = new EmbeddedQueue(directory.toFile(), 100, 30000, 2, 8192);
         Reader reader = q.readFromOffset(0, out);
         reader.start();
         q.addMessage(0, "boo".getBytes());

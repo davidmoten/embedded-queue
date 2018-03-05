@@ -44,23 +44,24 @@ public final class EmbeddedQueue {
     private final int maxSegmentSize;
     private final long addSegmentMaxWaitTimeMs;
     private final int batchSize;
+    private final int messageBufferSize;
 
-    public EmbeddedQueue(File directory, int maxSegmentSize, long addSegmentMaxWaitTimeMs,
-            int batchSize) {
+    public EmbeddedQueue(File directory, int maxSegmentSize, long addSegmentMaxWaitTimeMs, int batchSize, int messageBufferSize) {
         this.directory = directory;
         this.maxSegmentSize = maxSegmentSize;
         this.addSegmentMaxWaitTimeMs = addSegmentMaxWaitTimeMs;
         this.batchSize = batchSize;
         this.queue = new MpscLinkedQueue<>();
         this.store = new Store();
+        this.messageBufferSize = messageBufferSize;
     }
 
     public Reader readSinceTime(long since, OutputStream out) {
-        return new Reader(Optional.of(since), Optional.empty(), out, this, batchSize);
+        return new Reader(Optional.of(since), Optional.empty(), out, this, batchSize, messageBufferSize);
     }
 
     public Reader readFromOffset(long offset, OutputStream out) {
-        return new Reader(Optional.empty(), Optional.of(offset), out, this, batchSize);
+        return new Reader(Optional.empty(), Optional.of(offset), out, this, batchSize, messageBufferSize);
     }
 
     public boolean addMessage(long time, byte[] message) {
@@ -280,19 +281,21 @@ public final class EmbeddedQueue {
         private final AtomicBoolean once = new AtomicBoolean(false);
         private final Worker worker = Schedulers.io().createWorker();
         private final AtomicLong requested = new AtomicLong();
+        private final byte[] messageBuffer;
 
         Segment segment;
 
         // synchronized by wip
         private RandomAccessFile f;
 
-        public Reader(Optional<Long> offset, Optional<Long> since, OutputStream out,
-                EmbeddedQueue eq, long batchSize) {
+
+        public Reader(Optional<Long> offset, Optional<Long> since, OutputStream out, EmbeddedQueue eq, long batchSize, int messageBufferSize) {
             this.offset = offset;
             this.since = since;
             this.out = out;
             this.eq = eq;
             this.batchSize = batchSize;
+            this.messageBuffer = new byte[messageBufferSize];
         }
 
         void read() {
@@ -325,9 +328,6 @@ public final class EmbeddedQueue {
                 }
             }
         }
-
-        // cached message bytes particularly useful if message length is always the same
-        private byte[] message;
 
         /**
          * Returns true if and only if no more messages were found or if batchSize was
@@ -367,29 +367,31 @@ public final class EmbeddedQueue {
                             result = false;
                             break;
                         } else if (length + f.getFilePointer() > f.length()) {
-                            reportError("message in file " + segment.file + " at position "
-                                    + startPosition + " is longer than the length of the file");
+                            reportError("message in file " + segment.file + " at position " + startPosition
+                                    + " is longer than the length of the file");
                             advanceToNextFile();
                             result = false;
                             break;
                         } else {
-                            // TODO use same buffer for smaller messages too
-                            if (message == null || message.length != length) {
-                                message = new byte[length];
+                            final byte[] message;
+                            if (messageBuffer.length >= length) {
+                                message = messageBuffer;
+                            } else {
+                                message = new byte[length]; 
                             }
                             long offset = f.readLong();
                             // blocks
-                            f.readFully(message);
+                            f.readFully(message,0, length);
                             long expected = f.readLong();
                             CRC32 crc = new CRC32();
-                            crc.update(message);
+                            crc.update(message,0, length);
                             if (crc.getValue() != expected) {
-                                reportError("crc doesn't match for message in file " + segment.file
-                                        + " at position " + startPosition);
+                                reportError("crc doesn't match for message in file " + segment.file + " at position "
+                                        + startPosition);
                             } else {
                                 out.write(Util.toBytes(length));
                                 out.write(Util.toBytes(offset));
-                                out.write(message);
+                                out.write(message, 0, length);
                                 e++;
                                 log.info("{} bytes written to output", message.length);
                             }
