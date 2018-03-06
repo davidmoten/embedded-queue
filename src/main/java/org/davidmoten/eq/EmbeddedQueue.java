@@ -175,9 +175,7 @@ public final class EmbeddedQueue {
                             }
                             log.info("setting next segment to " + nextSegment.file);
                             if (nextSegment != null) {
-                                r.reader.segment = nextSegment;
-                                r.reader.advancingToNextFile = false;
-                                r.reader.scheduleRead();
+                                r.reader.nextSegment(nextSegment);
                             }
                         }
                     }
@@ -276,6 +274,10 @@ public final class EmbeddedQueue {
             }
         }
 
+        public long startOffset() {
+            return Long.valueOf(file.getName());
+        }
+
     }
 
     public static final class Reader {
@@ -294,16 +296,19 @@ public final class EmbeddedQueue {
         private final AtomicLong requested = new AtomicLong();
         private final byte[] messageBuffer;
 
-        // States
-        // WAITING_FIRST_SEGMENT
-        // READING
-        // ADVANCING_TO_NEXT_SEGMENT
-        // READING
-        // REQUESTS_MET
-        // NO_MORE_AVAILABLE
-        // CANCELLED
+        private enum State {
+            WAITING_FIRST_SEGMENT, //
+            FIRST_READ, //
+            READING, //
+            ADVANCING_TO_NEXT_SEGMENT, //
+            REQUESTS_MET, //
+            NO_MORE_AVAILABLE, //
+            CANCELLED
+        }
 
-        // WFS -> READING
+        // WFS -> WFS
+        // WFS -> FIRST_READ
+        // FIRST_READ -> READING
         // READING -> ADVANCING_TO_NEXT_SEGMENT
         // ADVANCING_TO_NEXT_SEGMENT -> READING
         // READING -> NO_MORE_AVAILABLE
@@ -312,11 +317,10 @@ public final class EmbeddedQueue {
         // * -> CANCELLED
 
         Segment segment;
+        private State state;
 
         // synchronized by wip
         private RandomAccessFile f;
-        boolean advancingToNextFile;
-        boolean firstRead = true;
 
         public Reader(Optional<Long> offset, Optional<Long> since, OutputStream out,
                 EmbeddedQueue eq, long batchSize, int messageBufferSize) {
@@ -326,24 +330,49 @@ public final class EmbeddedQueue {
             this.eq = eq;
             this.batchSize = batchSize;
             this.messageBuffer = new byte[messageBufferSize];
+            this.state = State.WAITING_FIRST_SEGMENT;
+        }
+
+        public void nextSegment(Segment nextSegment) {
+            worker.schedule(() -> tryNextSegment(nextSegment));
+        }
+
+        private void tryNextSegment(Segment nextSegment) {
+            if (state == State.ADVANCING_TO_NEXT_SEGMENT) {
+                segment = nextSegment;
+                state = State.READING;
+                read();
+            } else if (state == State.WAITING_FIRST_SEGMENT) {
+                if (offset.isPresent()) {
+                    if (segment.startOffset() <= offset.get()
+                            && (segment.startOffset() + segment.file.length()) > offset.get()) {
+                        segment = nextSegment;
+                        state = State.FIRST_READ;
+                        read();
+                    } else {
+                        eq.nextSegment(this, nextSegment);
+                    }
+                } else {
+                    segment = nextSegment;
+                    read();
+                }
+            }
         }
 
         void read() {
             log.info("reading");
-            if (advancingToNextFile) {
+            if (state == State.ADVANCING_TO_NEXT_SEGMENT) {
                 log.info("abort read because advancing");
                 return;
-            } else if (segment == null) {
-                log.info("segment is null, requesting next");
-                eq.nextSegment(this, segment);
-                eq.attemptRead(this);
+            } else if (state == State.WAITING_FIRST_SEGMENT) {
+                log.info("abort read because waiting first segment");
                 return;
             } else {
                 if (f == null) {
                     log.info("creating RandomAccessFile for {}", segment.file);
                     try {
                         f = new RandomAccessFile(segment.file, "rw");
-                        if (firstRead) {
+                        if (state == State.FIRST_READ) {
                             long segmentOffset = Long.valueOf(segment.file.getName());
                             if (offset.isPresent()) {
                                 f.seek(offset.get() - segmentOffset);
@@ -351,7 +380,6 @@ public final class EmbeddedQueue {
                                 // TODO search using time index
                                 f.seek(0);
                             }
-                            firstRead = false;
                         } else {
                             // start from beginning of segment
                             f.seek(0);
@@ -360,7 +388,9 @@ public final class EmbeddedQueue {
                         throw new IORuntimeException(e);
                     }
                 }
-                if (!read(requested, batchSize, out)) {
+                state = State.READING;
+                state = read(requested, batchSize, out);
+                if (state == State.READING) {
                     // there may be more messages waiting (and there are sufficient requests) so try
                     // again but it should be scheduled so that other readers can get a turn to emit
                     eq.attemptRead(this);
@@ -380,74 +410,72 @@ public final class EmbeddedQueue {
          * @param out
          * @return
          */
-        boolean read(AtomicLong requested, long batchSize, OutputStream out) {
-            if (f == null) {
-                return true;
-            } else {
-                log.info("reading from " + segment.file);
-                long r = requested.get();
-                long e = 0;
-                long attempts = 0;
-                boolean result = false;
-                try {
-                    while (e != r) {
-                        long startPosition = f.getFilePointer();
-                        int length;
-                        synchronized (segment) {
-                            length = f.readInt();
-                        }
-                        if (length == LENGTH_ZERO) {
-                            // reset the read
-                            f.seek(startPosition);
-                            return true;
-                        }
-                        if (length == EOF) {
-                            log.info("advancing to next file");
-                            advanceToNextFile();
-                            result = false;
-                            break;
-                        } else if (length + f.getFilePointer() > f.length()) {
-                            reportError("message in file " + segment.file + " at position "
-                                    + startPosition + " is longer than the length of the file");
-                            advanceToNextFile();
-                            result = false;
-                            break;
-                        } else {
-                            final byte[] message;
-                            if (messageBuffer.length >= length) {
-                                message = messageBuffer;
-                            } else {
-                                message = new byte[length];
-                            }
-                            long offset = f.readLong();
-                            f.readFully(message, 0, length);
-                            long expected = f.readLong();
-                            CRC32 crc = new CRC32();
-                            crc.update(message, 0, length);
-                            if (crc.getValue() != expected) {
-                                reportError("crc doesn't match for message in file " + segment.file
-                                        + " at position " + startPosition);
-                            } else {
-                                out.write(Util.toBytes(length));
-                                out.write(Util.toBytes(offset));
-                                out.write(message, 0, length);
-                                e++;
-                                log.info("{} bytes written to output={}", length,
-                                        new String(message, 0, length));
-                            }
-                            attempts++;
-                        }
-                        if (attempts == batchSize) {
-                            result = true;
-                            break;
-                        }
+        State read(AtomicLong requested, long batchSize, OutputStream out) {
+
+            log.info("reading from " + segment.file);
+            long r = requested.get();
+            long e = 0;
+            long attempts = 0;
+            State result = State.READING;
+            try {
+                while (e != r) {
+                    long startPosition = f.getFilePointer();
+                    int length;
+                    synchronized (segment) {
+                        length = f.readInt();
                     }
-                    Util.addRequest(requested, -e);
-                    return result;
-                } catch (IOException ex) {
-                    cancel();
-                    throw new IORuntimeException(ex);
+                    if (length == LENGTH_ZERO) {
+                        // reset the read
+                        f.seek(startPosition);
+                        result = State.NO_MORE_AVAILABLE;
+                        break;
+                    }
+                    if (length == EOF) {
+                        log.info("advancing to next file");
+                        advanceToNextFile();
+                        result = State.ADVANCING_TO_NEXT_SEGMENT;
+                        break;
+                    } else if (length + f.getFilePointer() > f.length()) {
+                        reportError("message in file " + segment.file + " at position "
+                                + startPosition + " is longer than the length of the file");
+                        advanceToNextFile();
+                        result = false;
+                        break;
+                    } else {
+                        final byte[] message;
+                        if (messageBuffer.length >= length) {
+                            message = messageBuffer;
+                        } else {
+                            message = new byte[length];
+                        }
+                        long offset = f.readLong();
+                        f.readFully(message, 0, length);
+                        long expected = f.readLong();
+                        CRC32 crc = new CRC32();
+                        crc.update(message, 0, length);
+                        if (crc.getValue() != expected) {
+                            reportError("crc doesn't match for message in file " + segment.file
+                                    + " at position " + startPosition);
+                        } else {
+                            out.write(Util.toBytes(length));
+                            out.write(Util.toBytes(offset));
+                            out.write(message, 0, length);
+                            e++;
+                            log.info("{} bytes written to output={}", length,
+                                    new String(message, 0, length));
+                        }
+                        attempts++;
+                    }
+                    if (attempts == batchSize) {
+                        result = true;
+                        break;
+                    }
                 }
+                Util.addRequest(requested, -e);
+                return result;
+            } catch (IOException ex) {
+                cancel();
+                throw new IORuntimeException(ex);
             }
         }
 
@@ -531,10 +559,12 @@ public final class EmbeddedQueue {
     static final class RequestNextSegment {
         final Segment segment;
         final Reader reader;
+        final Optional<Long> offset;
 
-        RequestNextSegment(Reader reader, Segment segment) {
+        RequestNextSegment(Reader reader, Segment segment, Optional<Long> offset) {
             this.segment = segment;
             this.reader = reader;
+            this.offset = offset;
         }
 
     }
