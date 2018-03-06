@@ -102,7 +102,7 @@ public final class EmbeddedQueue {
         drain();
     }
 
-    void nextSegment(Reader reader, Segment segment, Optional<Long> offset) {
+    void nextSegment(Reader reader, Segment segment, long offset) {
         queue.offer(new RequestNextSegment(reader, segment, offset));
         drain();
     }
@@ -163,6 +163,13 @@ public final class EmbeddedQueue {
                             }
                         }
                     } else if (o instanceof RequestNextSegment) {
+                        RequestNextSegment r = (RequestNextSegment) o;
+                        boolean foundFirst = false;
+                        for (Segment segment : store.segments) {
+                            if (r.segment == null && r.offset) {
+                                
+                            }
+                        }
                         if (store.segments.size() > 0) {
                             log.info("segments = {}", store.segments.stream()
                                     .map(x -> x.file.getName()).collect(Collectors.toList()));
@@ -349,7 +356,7 @@ public final class EmbeddedQueue {
                         state = State.FIRST_READ;
                         read();
                     } else {
-                        eq.nextSegment(this, nextSegment, offset);
+                        eq.nextSegment(this, nextSegment, offset.get());
                     }
                 } else {
                     segment = nextSegment;
@@ -496,7 +503,7 @@ public final class EmbeddedQueue {
             segment = null;
             closeQuietly(f);
             f = null;
-            eq.nextSegment(this, seg, offset);
+            eq.nextSegment(this, seg, offset.get());
         }
 
         void scheduleRead() {
@@ -566,9 +573,9 @@ public final class EmbeddedQueue {
     static final class RequestNextSegment {
         final Segment segment;
         final Reader reader;
-        final Optional<Long> offset;
+        final long offset;
 
-        RequestNextSegment(Reader reader, Segment segment, Optional<Long> offset) {
+        RequestNextSegment(Reader reader, Segment segment, long offset) {
             this.segment = segment;
             this.reader = reader;
             this.offset = offset;
