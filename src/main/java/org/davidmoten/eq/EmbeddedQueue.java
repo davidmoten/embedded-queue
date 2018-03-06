@@ -102,8 +102,8 @@ public final class EmbeddedQueue {
         drain();
     }
 
-    void nextSegment(Reader reader, Segment segment) {
-        queue.offer(new RequestNextSegment(reader, segment));
+    void nextSegment(Reader reader, Segment segment, Optional<Long> offset) {
+        queue.offer(new RequestNextSegment(reader, segment, offset));
         drain();
     }
 
@@ -299,10 +299,10 @@ public final class EmbeddedQueue {
         private enum State {
             WAITING_FIRST_SEGMENT, //
             FIRST_READ, //
-            READING, //
             ADVANCING_TO_NEXT_SEGMENT, //
             REQUESTS_MET, //
             NO_MORE_AVAILABLE, //
+            BATCH_READ, //
             CANCELLED
         }
 
@@ -340,7 +340,6 @@ public final class EmbeddedQueue {
         private void tryNextSegment(Segment nextSegment) {
             if (state == State.ADVANCING_TO_NEXT_SEGMENT) {
                 segment = nextSegment;
-                state = State.READING;
                 read();
             } else if (state == State.WAITING_FIRST_SEGMENT) {
                 if (offset.isPresent()) {
@@ -350,7 +349,7 @@ public final class EmbeddedQueue {
                         state = State.FIRST_READ;
                         read();
                     } else {
-                        eq.nextSegment(this, nextSegment);
+                        eq.nextSegment(this, nextSegment, offset);
                     }
                 } else {
                     segment = nextSegment;
@@ -359,6 +358,8 @@ public final class EmbeddedQueue {
             }
         }
 
+        // access to this method must be serialized
+        // as it does io it should be run in an io thread
         void read() {
             log.info("reading");
             if (state == State.ADVANCING_TO_NEXT_SEGMENT) {
@@ -388,9 +389,8 @@ public final class EmbeddedQueue {
                         throw new IORuntimeException(e);
                     }
                 }
-                state = State.READING;
                 state = read(requested, batchSize, out);
-                if (state == State.READING) {
+                if (state == State.BATCH_READ) {
                     // there may be more messages waiting (and there are sufficient requests) so try
                     // again but it should be scheduled so that other readers can get a turn to emit
                     eq.attemptRead(this);
@@ -416,9 +416,13 @@ public final class EmbeddedQueue {
             long r = requested.get();
             long e = 0;
             long attempts = 0;
-            State result = State.READING;
+            State result = null;
             try {
-                while (e != r) {
+                while (true) {
+                    if (e == r) {
+                        result = State.REQUESTS_MET;
+                        break;
+                    }
                     long startPosition = f.getFilePointer();
                     int length;
                     synchronized (segment) {
@@ -439,7 +443,7 @@ public final class EmbeddedQueue {
                         reportError("message in file " + segment.file + " at position "
                                 + startPosition + " is longer than the length of the file");
                         advanceToNextFile();
-                        result = false;
+                        result = State.ADVANCING_TO_NEXT_SEGMENT;
                         break;
                     } else {
                         final byte[] message;
@@ -467,7 +471,11 @@ public final class EmbeddedQueue {
                         attempts++;
                     }
                     if (attempts == batchSize) {
-                        result = true;
+                        if (e == r) {
+                            result = State.REQUESTS_MET;
+                        } else {
+                            result = State.BATCH_READ;
+                        }
                         break;
                     }
                 }
@@ -484,12 +492,11 @@ public final class EmbeddedQueue {
         }
 
         private void advanceToNextFile() {
-            advancingToNextFile = true;
             Segment seg = segment;
             segment = null;
             closeQuietly(f);
             f = null;
-            eq.nextSegment(this, seg);
+            eq.nextSegment(this, seg, offset);
         }
 
         void scheduleRead() {
