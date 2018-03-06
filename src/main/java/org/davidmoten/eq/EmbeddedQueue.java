@@ -47,8 +47,8 @@ public final class EmbeddedQueue {
     private final int batchSize;
     private final int messageBufferSize;
 
-    public EmbeddedQueue(File directory, int maxSegmentSize, long addSegmentMaxWaitTimeMs, int batchSize,
-            int messageBufferSize) {
+    public EmbeddedQueue(File directory, int maxSegmentSize, long addSegmentMaxWaitTimeMs,
+            int batchSize, int messageBufferSize) {
         this.directory = directory;
         this.maxSegmentSize = maxSegmentSize;
         this.addSegmentMaxWaitTimeMs = addSegmentMaxWaitTimeMs;
@@ -59,11 +59,13 @@ public final class EmbeddedQueue {
     }
 
     public Reader readSinceTime(long since, OutputStream out) {
-        return new Reader(Optional.of(since), Optional.empty(), out, this, batchSize, messageBufferSize);
+        return new Reader(Optional.of(since), Optional.empty(), out, this, batchSize,
+                messageBufferSize);
     }
 
     public Reader readFromOffset(long offset, OutputStream out) {
-        return new Reader(Optional.empty(), Optional.of(offset), out, this, batchSize, messageBufferSize);
+        return new Reader(Optional.empty(), Optional.of(offset), out, this, batchSize,
+                messageBufferSize);
     }
 
     public boolean addMessage(long time, byte[] message) {
@@ -76,7 +78,7 @@ public final class EmbeddedQueue {
         store.writer.segment.size += numBytes;
         if (store.writer.segment.size >= maxSegmentSize) {
             store.writer.segment.closeForWrite();
-            
+
             addAndWaitForSegment();
             log.info("segments={}", store.segments);
         }
@@ -162,8 +164,8 @@ public final class EmbeddedQueue {
                         }
                     } else if (o instanceof RequestNextSegment) {
                         if (store.segments.size() > 0) {
-                            log.info("segments = {}",
-                                    store.segments.stream().map(x -> x.file.getName()).collect(Collectors.toList()));
+                            log.info("segments = {}", store.segments.stream()
+                                    .map(x -> x.file.getName()).collect(Collectors.toList()));
                             RequestNextSegment r = (RequestNextSegment) o;
                             Segment nextSegment;
                             if (r.segment == null) {
@@ -292,6 +294,23 @@ public final class EmbeddedQueue {
         private final AtomicLong requested = new AtomicLong();
         private final byte[] messageBuffer;
 
+        // States
+        // WAITING_FIRST_SEGMENT
+        // READING
+        // ADVANCING_TO_NEXT_SEGMENT
+        // READING
+        // REQUESTS_MET
+        // NO_MORE_AVAILABLE
+        // CANCELLED
+
+        // WFS -> READING
+        // READING -> ADVANCING_TO_NEXT_SEGMENT
+        // ADVANCING_TO_NEXT_SEGMENT -> READING
+        // READING -> NO_MORE_AVAILABLE
+        // NO_MORE_AVAILABLE -> READING
+        // NO_MORE_AVAILABLE -> ADVANCING_TO_NEXT_SEGMENT
+        // * -> CANCELLED
+
         Segment segment;
 
         // synchronized by wip
@@ -299,8 +318,8 @@ public final class EmbeddedQueue {
         boolean advancingToNextFile;
         boolean firstRead = true;
 
-        public Reader(Optional<Long> offset, Optional<Long> since, OutputStream out, EmbeddedQueue eq, long batchSize,
-                int messageBufferSize) {
+        public Reader(Optional<Long> offset, Optional<Long> since, OutputStream out,
+                EmbeddedQueue eq, long batchSize, int messageBufferSize) {
             this.offset = offset;
             this.since = since;
             this.out = out;
@@ -388,8 +407,8 @@ public final class EmbeddedQueue {
                             result = false;
                             break;
                         } else if (length + f.getFilePointer() > f.length()) {
-                            reportError("message in file " + segment.file + " at position " + startPosition
-                                    + " is longer than the length of the file");
+                            reportError("message in file " + segment.file + " at position "
+                                    + startPosition + " is longer than the length of the file");
                             advanceToNextFile();
                             result = false;
                             break;
@@ -406,14 +425,15 @@ public final class EmbeddedQueue {
                             CRC32 crc = new CRC32();
                             crc.update(message, 0, length);
                             if (crc.getValue() != expected) {
-                                reportError("crc doesn't match for message in file " + segment.file + " at position "
-                                        + startPosition);
+                                reportError("crc doesn't match for message in file " + segment.file
+                                        + " at position " + startPosition);
                             } else {
                                 out.write(Util.toBytes(length));
                                 out.write(Util.toBytes(offset));
                                 out.write(message, 0, length);
                                 e++;
-                                log.info("{} bytes written to output={}", length, new String(message, 0, length));
+                                log.info("{} bytes written to output={}", length,
+                                        new String(message, 0, length));
                             }
                             attempts++;
                         }
