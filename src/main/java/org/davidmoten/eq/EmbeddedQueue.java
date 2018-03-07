@@ -10,7 +10,6 @@ import java.io.OutputStream;
 import java.io.RandomAccessFile;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Optional;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -154,10 +153,10 @@ public final class EmbeddedQueue {
                     if (o instanceof RequestAddReader) {
                         Reader r = ((RequestAddReader) o).reader;
                         store.add(r);
-                        r.scheduleRead();
+                        r.read();
                     } else if (o instanceof Reader) {
                         // handle request
-                        ((Reader) o).scheduleRead();
+                        ((Reader) o).read();
                     } else if (o instanceof RequestAddSegment) {
                         RequestAddSegment add = (RequestAddSegment) o;
                         store.segments.add(add.segment);
@@ -170,7 +169,7 @@ public final class EmbeddedQueue {
                         // segment has been written to so notify readers
                         for (Reader reader : store.readers) {
                             if (reader.segment == null || o == reader.segment) {
-                                reader.scheduleRead();
+                                reader.read();
                             }
                         }
                     } else if (o instanceof RequestNextSegment) {
@@ -307,6 +306,8 @@ public final class EmbeddedQueue {
         private final AtomicLong requested = new AtomicLong();
         private final byte[] messageBuffer;
 
+        private volatile boolean cancelled;
+
         private enum State {
             WAITING_FIRST_SEGMENT, //
             FIRST_READ, //
@@ -316,16 +317,6 @@ public final class EmbeddedQueue {
             BATCH_READ, //
             CANCELLED
         }
-
-        // WFS -> WFS
-        // WFS -> FIRST_READ
-        // FIRST_READ -> READING
-        // READING -> ADVANCING_TO_NEXT_SEGMENT
-        // ADVANCING_TO_NEXT_SEGMENT -> READING
-        // READING -> NO_MORE_AVAILABLE
-        // NO_MORE_AVAILABLE -> READING
-        // NO_MORE_AVAILABLE -> ADVANCING_TO_NEXT_SEGMENT
-        // * -> CANCELLED
 
         Segment segment;
         private State state;
@@ -374,13 +365,12 @@ public final class EmbeddedQueue {
         // access to this method must be serialized
         // as it does io it should be run in an io thread
         private void _read() {
+            if (cancelled) {
+                return;
+            }
             log.info("reading");
-            if (state == State.ADVANCING_TO_NEXT_SEGMENT) {
-                log.info("abort read because advancing");
-                return;
-            } else if (state == State.WAITING_FIRST_SEGMENT) {
-                log.info("abort read because waiting first segment");
-                return;
+            if (state == State.CANCELLED) {
+                log.info("abort read because cancelled");
             } else {
                 if (f == null) {
                     log.info("creating RandomAccessFile for {}", segment.file);
@@ -506,7 +496,7 @@ public final class EmbeddedQueue {
             eq.requestNextSegment(this, seg, offset);
         }
 
-        void scheduleRead() {
+        void read() {
             // TODO ensure that don't schedule too many reads
             // don't want to blow out heap with queued tasks
             // just because writing is happening faster than
@@ -527,9 +517,8 @@ public final class EmbeddedQueue {
         }
 
         public void cancel() {
+            cancelled = true;
             worker.dispose();
-            // set to null to help gc of long-lived reference
-            eq = null;
         }
 
         public void start() {
