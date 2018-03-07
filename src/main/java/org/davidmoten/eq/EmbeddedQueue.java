@@ -33,8 +33,10 @@ public final class EmbeddedQueue {
 
     private static final int OFFSET_NUM_BYTES = 8;
     private static final int LENGTH_NUM_BYTES = 4;
+    private static final int CHECKSUM_NUM_BYTES = 8;
     private static final int LENGTH_ZERO = 0;
     private static final int EOF = -1;
+
 
     private final SimplePlainQueue<Object> queue;
     private final Store store;
@@ -65,8 +67,8 @@ public final class EmbeddedQueue {
         return new Reader(offset, out, this, batchSize, messageBufferSize);
     }
 
-    public int outputHeaderLength() {
-        return LENGTH_NUM_BYTES + OFFSET_NUM_BYTES;
+    public int inputHeaderLength() {
+        return LENGTH_NUM_BYTES + OFFSET_NUM_BYTES + CHECKSUM_NUM_BYTES;
     }
 
     public boolean addMessage(long time, byte[] message) {
@@ -263,6 +265,7 @@ public final class EmbeddedQueue {
                     }
                 }
                 long position = w.getFilePointer();
+                // TODO don't need to write this because reader can calculate?
                 w.writeLong(offset);
                 w.write(message);
                 w.writeLong(crc.getValue());
@@ -274,7 +277,7 @@ public final class EmbeddedQueue {
                 }
                 // get position ready for next write (just after length bytes)
                 w.seek(position2);
-                log.info("message written to " + file);
+                log.info("message written to " + file + " at offset " + (position - LENGTH_NUM_BYTES));
             } catch (IOException e) {
                 throw new IORuntimeException(e);
             }
@@ -317,8 +320,8 @@ public final class EmbeddedQueue {
 
         private enum State {
             WAITING_FIRST_SEGMENT, //
-            READY_TO_READ, //
-            FIRST_READ, //
+            READY_TO_READ_NOT_FIRST, //
+            READY_TO_READ_FIRST, //
             ADVANCING_TO_NEXT_SEGMENT, //
             REQUESTS_MET, //
             NO_MORE_AVAILABLE, //
@@ -359,12 +362,12 @@ public final class EmbeddedQueue {
         private void nextSegmentInternal(Segment nextSegment) {
             if (state == State.ADVANCING_TO_NEXT_SEGMENT) {
                 segment = nextSegment;
-                state = State.READY_TO_READ;
+                state = State.READY_TO_READ_NOT_FIRST;
                 readInternal();
             } else if (state == State.WAITING_FIRST_SEGMENT) {
                 if (nextSegment.startOffset() + nextSegment.file.length() > offset) {
                     segment = nextSegment;
-                    state = State.FIRST_READ;
+                    state = State.READY_TO_READ_FIRST;
                     readInternal();
                 } else {
                     eq.requestNextSegment(this, nextSegment, offset);
@@ -393,7 +396,7 @@ public final class EmbeddedQueue {
                             throw new NullPointerException("segment is null , state=" + state);
                         }
                         f = new RandomAccessFile(segment.file, "rw");
-                        if (state == State.FIRST_READ) {
+                        if (state == State.READY_TO_READ_FIRST) {
                             long segmentOffset = Long.valueOf(segment.file.getName());
                             f.seek(offset - segmentOffset);
                         } else {

@@ -40,7 +40,7 @@ public class EmbeddedQueueTest {
         Path directory = Files.createTempDirectory(new File("target").toPath(), "test");
         SynchronizedOutputStream out = new SynchronizedOutputStream();
         EmbeddedQueue q = new EmbeddedQueue(directory.toFile(), 100, 30000, 2, 8192);
-        Reader reader = q.readFromOffset("boo".getBytes().length + q.outputHeaderLength(), out);
+        Reader reader = q.readFromOffset("boo".getBytes().length + q.inputHeaderLength(), out);
         reader.start();
         q.addMessage(0, "boo".getBytes());
         q.addMessage(1, "you".getBytes());
