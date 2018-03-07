@@ -21,7 +21,7 @@ import org.junit.Test;
 public class EmbeddedQueueTest {
 
     @Test
-    public void test() throws IOException, InterruptedException {
+    public void testOneSegmentWriteAndRead() throws IOException, InterruptedException {
         Path directory = Files.createTempDirectory(new File("target").toPath(), "test");
         SynchronizedOutputStream out = new SynchronizedOutputStream();
         EmbeddedQueue q = new EmbeddedQueue(directory.toFile(), 100, 30000, 2, 8192);
@@ -34,7 +34,22 @@ public class EmbeddedQueueTest {
         assertEquals(30, out.bytes().length);
         assertEquals(Arrays.asList("boo", "you"), messages(out.bytes()));
     }
-    
+
+    @Test
+    public void testWriteReadFromOffsetOneSegment() throws IOException, InterruptedException {
+        Path directory = Files.createTempDirectory(new File("target").toPath(), "test");
+        SynchronizedOutputStream out = new SynchronizedOutputStream();
+        EmbeddedQueue q = new EmbeddedQueue(directory.toFile(), 100, 30000, 2, 8192);
+        Reader reader = q.readFromOffset("boo".getBytes().length + q.outputHeaderLength(), out);
+        reader.start();
+        q.addMessage(0, "boo".getBytes());
+        q.addMessage(1, "you".getBytes());
+        reader.request(5);
+        Thread.sleep(500);
+        assertEquals(15, out.bytes().length);
+        assertEquals(Arrays.asList("you"), messages(out.bytes()));
+    }
+
     @Test
     public void testMultipleSegments() throws IOException, InterruptedException {
         Path directory = Files.createTempDirectory(new File("target").toPath(), "test");

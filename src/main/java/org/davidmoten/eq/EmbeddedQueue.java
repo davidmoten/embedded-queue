@@ -32,7 +32,6 @@ public final class EmbeddedQueue {
     private static final Logger log = LoggerFactory.getLogger(EmbeddedQueue.class);
 
     private static final int OFFSET_NUM_BYTES = 8;
-    private static final int CHECKSUM_NUM_BYTES = 8;
     private static final int LENGTH_NUM_BYTES = 4;
     private static final int LENGTH_ZERO = 0;
     private static final int EOF = -1;
@@ -66,13 +65,17 @@ public final class EmbeddedQueue {
         return new Reader(offset, out, this, batchSize, messageBufferSize);
     }
 
+    public int outputHeaderLength() {
+        return LENGTH_NUM_BYTES + OFFSET_NUM_BYTES;
+    }
+
     public boolean addMessage(long time, byte[] message) {
         log.info("adding message");
         if (store.writer.segment == null) {
             addAndWaitForSegment();
             log.info("segments={}", store.segments);
         }
-        int numBytes = message.length + LENGTH_NUM_BYTES + OFFSET_NUM_BYTES + CHECKSUM_NUM_BYTES;
+        int numBytes = message.length;
         // want to watch out for the case where a message is bigger than maxSegmentSize
         // and allow for it to be written to a segment
         // TODO add unit test for that situation
@@ -314,7 +317,7 @@ public final class EmbeddedQueue {
 
         private enum State {
             WAITING_FIRST_SEGMENT, //
-            READY_TO_READ , //
+            READY_TO_READ, //
             FIRST_READ, //
             ADVANCING_TO_NEXT_SEGMENT, //
             REQUESTS_MET, //
