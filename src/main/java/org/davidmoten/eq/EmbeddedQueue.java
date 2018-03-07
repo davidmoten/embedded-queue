@@ -20,6 +20,8 @@ import java.util.zip.CRC32;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import com.github.davidmoten.guavamini.Preconditions;
+
 import io.reactivex.Scheduler.Worker;
 import io.reactivex.internal.fuseable.SimplePlainQueue;
 import io.reactivex.internal.queue.MpscLinkedQueue;
@@ -240,6 +242,8 @@ public final class EmbeddedQueue {
         RandomAccessFile w;
 
         Segment(File file, File index) {
+            Preconditions.checkNotNull(file);
+            Preconditions.checkNotNull(index);
             this.file = file;
             this.index = index;
         }
@@ -310,6 +314,7 @@ public final class EmbeddedQueue {
 
         private enum State {
             WAITING_FIRST_SEGMENT, //
+            READY_TO_READ , //
             FIRST_READ, //
             ADVANCING_TO_NEXT_SEGMENT, //
             REQUESTS_MET, //
@@ -334,28 +339,30 @@ public final class EmbeddedQueue {
         }
 
         void segmentAdded() {
-            worker.schedule(() -> _segmentAdded());
+            worker.schedule(() -> segmentAddedInternal());
         }
 
         void nextSegment(Segment nextSegment) {
-            worker.schedule(() -> _nextSegment(nextSegment));
+            Preconditions.checkNotNull(nextSegment);
+            worker.schedule(() -> nextSegmentInternal(nextSegment));
         }
 
-        private void _segmentAdded() {
+        private void segmentAddedInternal() {
             if (state == State.WAITING_FIRST_SEGMENT) {
                 eq.requestFirstSegment(this, offset);
             }
         }
 
-        private void _nextSegment(Segment nextSegment) {
+        private void nextSegmentInternal(Segment nextSegment) {
             if (state == State.ADVANCING_TO_NEXT_SEGMENT) {
                 segment = nextSegment;
-                _read();
+                state = State.READY_TO_READ;
+                readInternal();
             } else if (state == State.WAITING_FIRST_SEGMENT) {
                 if (nextSegment.startOffset() + nextSegment.file.length() > offset) {
                     segment = nextSegment;
                     state = State.FIRST_READ;
-                    _read();
+                    readInternal();
                 } else {
                     eq.requestNextSegment(this, nextSegment, offset);
                 }
@@ -364,17 +371,24 @@ public final class EmbeddedQueue {
 
         // access to this method must be serialized
         // as it does io it should be run in an io thread
-        private void _read() {
+        private void readInternal() {
             if (cancelled) {
                 return;
             }
             log.info("reading");
             if (state == State.CANCELLED) {
                 log.info("abort read because cancelled");
+                return;
+            } else if (state == State.ADVANCING_TO_NEXT_SEGMENT) {
+                return;
+            } else if (state == State.WAITING_FIRST_SEGMENT) {
+                return;
             } else {
                 if (f == null) {
-                    log.info("creating RandomAccessFile for {}", segment.file);
                     try {
+                        if (segment == null) {
+                            throw new NullPointerException("segment is null , state=" + state);
+                        }
                         f = new RandomAccessFile(segment.file, "rw");
                         if (state == State.FIRST_READ) {
                             long segmentOffset = Long.valueOf(segment.file.getName());
@@ -387,7 +401,7 @@ public final class EmbeddedQueue {
                         throw new IORuntimeException(e);
                     }
                 }
-                state = read(requested, batchSize, out);
+                state = readInternal(requested, batchSize, out);
                 if (state == State.BATCH_READ) {
                     // there may be more messages waiting (and there are sufficient requests) so try
                     // again but it should be scheduled so that other readers can get a turn to emit
@@ -408,7 +422,7 @@ public final class EmbeddedQueue {
          * @param out
          * @return
          */
-        State read(AtomicLong requested, long batchSize, OutputStream out) {
+        State readInternal(AtomicLong requested, long batchSize, OutputStream out) {
 
             log.info("reading from " + segment.file);
             long r = requested.get();
@@ -502,7 +516,7 @@ public final class EmbeddedQueue {
             // just because writing is happening faster than
             // reading
             worker.schedule(() -> {
-                _read();
+                readInternal();
             });
         }
 
