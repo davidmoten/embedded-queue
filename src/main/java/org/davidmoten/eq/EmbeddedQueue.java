@@ -37,7 +37,6 @@ public final class EmbeddedQueue {
     private static final int LENGTH_ZERO = 0;
     private static final int EOF = -1;
 
-
     private final SimplePlainQueue<Object> queue;
     private final Store store;
     private final AtomicInteger wip = new AtomicInteger();
@@ -47,7 +46,7 @@ public final class EmbeddedQueue {
     private final int batchSize;
     private final int messageBufferSize;
 
-    public EmbeddedQueue(File directory, int maxSegmentSize, long addSegmentMaxWaitTimeMs, int batchSize,
+    private EmbeddedQueue(File directory, int maxSegmentSize, long addSegmentMaxWaitTimeMs, int batchSize,
             int messageBufferSize) {
         this.directory = directory;
         this.maxSegmentSize = maxSegmentSize;
@@ -56,6 +55,47 @@ public final class EmbeddedQueue {
         this.queue = new MpscLinkedQueue<>();
         this.store = new Store();
         this.messageBufferSize = messageBufferSize;
+    }
+
+    public static Builder directory(File directory) {
+        return new Builder(directory);
+    }
+
+    public static final class Builder {
+
+        private final File directory;
+        private int maxSegmentSize = 1024 * 1024;
+        private long addSegmentMaxWaitTimeMs = 30000;
+        private int batchSize = 1024;
+        private int messageBufferSize = 8192;
+
+        Builder(File directory) {
+            this.directory = directory;
+        }
+
+        public Builder maxSegmentSize(int value) {
+            this.maxSegmentSize = value;
+            return this;
+        }
+
+        public Builder addSegmentMaxWaitTime(long value, TimeUnit unit) {
+            this.addSegmentMaxWaitTimeMs = unit.toMillis(value);
+            return this;
+        }
+
+        public Builder batchSize(int value) {
+            this.batchSize = value;
+            return this;
+        }
+
+        public Builder messageBufferSize(int value) {
+            this.messageBufferSize = value;
+            return this;
+        }
+
+        public EmbeddedQueue build() {
+            return new EmbeddedQueue(directory, maxSegmentSize, addSegmentMaxWaitTimeMs, batchSize, messageBufferSize);
+        }
     }
 
     public Reader readSinceTime(long since, OutputStream out) {
@@ -360,11 +400,8 @@ public final class EmbeddedQueue {
         }
 
         private void nextSegmentInternal(Segment nextSegment) {
-            if (state == State.ADVANCING_TO_NEXT_SEGMENT) {
-                segment = nextSegment;
-                state = State.READY_TO_READ_NOT_FIRST;
-                readInternal();
-            } else if (state == State.WAITING_FIRST_SEGMENT) {
+            log.info("nextSegmentInternal, state="+ state);
+            if (state == State.WAITING_FIRST_SEGMENT) {
                 if (nextSegment.startOffset() + nextSegment.file.length() > offset) {
                     segment = nextSegment;
                     state = State.READY_TO_READ_FIRST;
@@ -372,6 +409,10 @@ public final class EmbeddedQueue {
                 } else {
                     eq.requestNextSegment(this, nextSegment, offset);
                 }
+            } else if (state == State.ADVANCING_TO_NEXT_SEGMENT) {
+                segment = nextSegment;
+                state = State.READY_TO_READ_NOT_FIRST;
+                readInternal();
             }
         }
 
@@ -381,7 +422,7 @@ public final class EmbeddedQueue {
             if (cancelled) {
                 return;
             }
-            log.info("reading");
+            log.info("reading, state=" + state);
             if (state == State.CANCELLED) {
                 log.info("abort read because cancelled");
                 return;
@@ -401,6 +442,7 @@ public final class EmbeddedQueue {
                             f.seek(offset - segmentOffset);
                         } else {
                             // start from beginning of segment
+                            log.info("moving to beginning of file, state=" + state);
                             f.seek(0);
                         }
                     } catch (IOException e) {
@@ -453,15 +495,15 @@ public final class EmbeddedQueue {
                         break;
                     }
                     if (length == EOF) {
-                        log.info("advancing to next file");
-                        advanceToNextFile();
+                        log.info("advancing to next segment");
                         result = State.ADVANCING_TO_NEXT_SEGMENT;
+                        advanceToNextFile();
                         break;
                     } else if (length + f.getFilePointer() > f.length()) {
                         reportError("message in file " + segment.file + " at position " + startPosition
                                 + " is longer than the length of the file");
-                        advanceToNextFile();
                         result = State.ADVANCING_TO_NEXT_SEGMENT;
+                        advanceToNextFile();
                         break;
                     } else {
                         final byte[] message;

@@ -14,6 +14,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.concurrent.TimeUnit;
 
 import org.davidmoten.eq.EmbeddedQueue.Reader;
 import org.junit.Test;
@@ -24,7 +25,13 @@ public class EmbeddedQueueTest {
     public void testOneSegmentWriteAndRead() throws IOException, InterruptedException {
         Path directory = Files.createTempDirectory(new File("target").toPath(), "test");
         SynchronizedOutputStream out = new SynchronizedOutputStream();
-        EmbeddedQueue q = new EmbeddedQueue(directory.toFile(), 100, 30000, 2, 8192);
+        EmbeddedQueue q = EmbeddedQueue //
+                .directory(directory.toFile()) //
+                .maxSegmentSize(100) //
+                .addSegmentMaxWaitTime(30, TimeUnit.SECONDS) //
+                .batchSize(2) //
+                .messageBufferSize(8192) //
+                .build();
         Reader reader = q.readFromOffset(0, out);
         reader.start();
         q.addMessage(0, "boo".getBytes());
@@ -39,7 +46,13 @@ public class EmbeddedQueueTest {
     public void testWriteReadFromOffsetOneSegment() throws IOException, InterruptedException {
         Path directory = Files.createTempDirectory(new File("target").toPath(), "test");
         SynchronizedOutputStream out = new SynchronizedOutputStream();
-        EmbeddedQueue q = new EmbeddedQueue(directory.toFile(), 100, 30000, 2, 8192);
+        EmbeddedQueue q = EmbeddedQueue //
+                .directory(directory.toFile()) //
+                .maxSegmentSize(100) //
+                .addSegmentMaxWaitTime(30, TimeUnit.SECONDS) //
+                .batchSize(2) //
+                .messageBufferSize(8192) //
+                .build();
         Reader reader = q.readFromOffset("boo".getBytes().length + q.inputHeaderLength(), out);
         reader.start();
         q.addMessage(0, "boo".getBytes());
@@ -54,7 +67,13 @@ public class EmbeddedQueueTest {
     public void testMultipleSegments() throws IOException, InterruptedException {
         Path directory = Files.createTempDirectory(new File("target").toPath(), "test");
         SynchronizedOutputStream out = new SynchronizedOutputStream();
-        EmbeddedQueue q = new EmbeddedQueue(directory.toFile(), 5, 30000, 2, 8192);
+        EmbeddedQueue q = EmbeddedQueue //
+                .directory(directory.toFile()) //
+                .maxSegmentSize(5) //
+                .addSegmentMaxWaitTime(30, TimeUnit.SECONDS) //
+                .batchSize(2) //
+                .messageBufferSize(8192) //
+                .build();
         Reader reader = q.readFromOffset(0, out);
         reader.start();
         q.addMessage(0, "boo".getBytes());
