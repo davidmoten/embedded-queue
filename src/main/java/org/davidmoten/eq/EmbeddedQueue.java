@@ -369,13 +369,36 @@ public final class EmbeddedQueue {
         // synchronized by wip
         private RandomAccessFile f;
 
-        public Reader(long offset, OutputStream out, EmbeddedQueue eq, int messageBufferSize) {
+        Reader(long offset, OutputStream out, EmbeddedQueue eq, int messageBufferSize) {
             this.offset = offset;
             this.out = out;
             this.eq = eq;
             this.messageBuffer = new byte[messageBufferSize];
             this.state = State.WAITING_FIRST_SEGMENT;
         }
+        
+        public void request(long n) {
+            if (n <= 0) {
+                return; // NOOP
+            }
+            addRequest(requested, n);
+
+            // indicate that requests exist
+            eq.attemptRead(this);
+        }
+
+        public void cancel() {
+            cancelled = true;
+            worker.dispose();
+        }
+
+        public void start() {
+            if (once.compareAndSet(false, true)) {
+                eq.addReader(this);
+            }
+        }
+        
+        //END OF PUBLIC API
 
         void segmentAdded() {
             worker.schedule(() -> segmentAddedInternal());
@@ -384,6 +407,16 @@ public final class EmbeddedQueue {
         void nextSegment(Segment nextSegment) {
             Preconditions.checkNotNull(nextSegment);
             worker.schedule(() -> nextSegmentInternal(nextSegment));
+        }
+        
+        void read() {
+            // TODO ensure that don't schedule too many reads
+            // don't want to blow out heap with queued tasks
+            // just because writing is happening faster than
+            // reading
+            worker.schedule(() -> {
+                readInternal();
+            });
         }
 
         private void segmentAddedInternal() {
@@ -411,7 +444,7 @@ public final class EmbeddedQueue {
                 }
             }
         }
-
+        
         // access to this method must be serialized
         // as it does io it should be run in an io thread
         private void readInternal() {
@@ -533,37 +566,6 @@ public final class EmbeddedQueue {
             closeQuietly(f);
             f = null;
             eq.requestNextSegment(this, seg, offset);
-        }
-
-        void read() {
-            // TODO ensure that don't schedule too many reads
-            // don't want to blow out heap with queued tasks
-            // just because writing is happening faster than
-            // reading
-            worker.schedule(() -> {
-                readInternal();
-            });
-        }
-
-        public void request(long n) {
-            if (n <= 0) {
-                return; // NOOP
-            }
-            addRequest(requested, n);
-
-            // indicate that requests exist
-            eq.attemptRead(this);
-        }
-
-        public void cancel() {
-            cancelled = true;
-            worker.dispose();
-        }
-
-        public void start() {
-            if (once.compareAndSet(false, true)) {
-                eq.addReader(this);
-            }
         }
 
     }
