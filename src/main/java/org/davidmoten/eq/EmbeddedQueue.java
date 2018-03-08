@@ -467,19 +467,7 @@ public final class EmbeddedQueue {
                     return;
                 } else {
                     if (state == State.SEGMENT_ARRIVED_FIRST || state == State.SEGMENT_ARRIVED_NOT_FIRST) {
-                        try {
-                            f = new RandomAccessFile(segment.file, "rw");
-                            if (state == State.SEGMENT_ARRIVED_FIRST) {
-                                long segmentOffset = Long.valueOf(segment.file.getName());
-                                f.seek(offset - segmentOffset);
-                            } else {
-                                // start from beginning of segment
-                                log.info("moving to beginning of file, state=" + state);
-                                f.seek(0);
-                            }
-                        } catch (IOException e) {
-                            throw new IORuntimeException(e);
-                        }
+                        openRandomAccessFile();
                     }
                     state = readInternal(requested, out);
                 }
@@ -487,6 +475,22 @@ public final class EmbeddedQueue {
                 if (missed == 0) {
                     return;
                 }
+            }
+        }
+
+        private void openRandomAccessFile() {
+            try {
+                f = new RandomAccessFile(segment.file, "rw");
+                if (state == State.SEGMENT_ARRIVED_FIRST) {
+                    long segmentOffset = Long.valueOf(segment.file.getName());
+                    f.seek(offset - segmentOffset);
+                } else {
+                    // start from beginning of segment
+                    log.info("moving to beginning of file, state=" + state);
+                    f.seek(0);
+                }
+            } catch (IOException e) {
+                throw new IORuntimeException(e);
             }
         }
 
