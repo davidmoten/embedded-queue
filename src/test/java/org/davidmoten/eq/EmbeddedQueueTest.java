@@ -64,7 +64,7 @@ public class EmbeddedQueueTest {
 
     @Test
     public void testMultipleSegments() throws IOException, InterruptedException {
-        for (int i = 0; i < 10; i++) {
+        for (int i = 0; i < 1000; i++) {
             Path directory = Files.createTempDirectory(new File("target").toPath(), "test");
             SynchronizedOutputStream out = new SynchronizedOutputStream();
             EmbeddedQueue q = EmbeddedQueue //
@@ -80,6 +80,8 @@ public class EmbeddedQueueTest {
             reader.request(5);
             waitForMessages(out, "boo", "you");
             reader.cancel();
+            Arrays.stream(directory.toFile().listFiles()).forEach(f -> f.delete());
+            directory.toFile().delete();
         }
     }
 
@@ -119,7 +121,7 @@ public class EmbeddedQueueTest {
     private static final class SynchronizedOutputStream extends OutputStream {
 
         private final ByteArrayOutputStream bytes = new ByteArrayOutputStream();
-        
+
         @Override
         public void write(int b) throws IOException {
             synchronized (this) {
