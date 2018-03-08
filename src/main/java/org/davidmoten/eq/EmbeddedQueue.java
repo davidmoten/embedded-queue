@@ -363,8 +363,8 @@ public final class EmbeddedQueue {
 
         private enum State {
             WAITING_FIRST_SEGMENT, //
-            READY_TO_READ_NOT_FIRST, //
-            READY_TO_READ_FIRST, //
+            SEGMENT_ARRIVED_NOT_FIRST, //
+            FIRST_SEGMENT_ARRIVED, //
             ADVANCING_TO_NEXT_SEGMENT, //
             REQUESTS_MET, //
             NO_MORE_AVAILABLE, //
@@ -407,7 +407,7 @@ public final class EmbeddedQueue {
             if (state == State.WAITING_FIRST_SEGMENT) {
                 if (nextSegment.startOffset() + nextSegment.file.length() > offset) {
                     segment = nextSegment;
-                    state = State.READY_TO_READ_FIRST;
+                    state = State.FIRST_SEGMENT_ARRIVED;
                     readInternal();
                 } else {
                     eq.requestNextSegment(this, nextSegment, offset);
@@ -416,7 +416,7 @@ public final class EmbeddedQueue {
                 // check that is not an old advance result
                 if (segment.startOffset < nextSegment.startOffset) {
                     segment = nextSegment;
-                    state = State.READY_TO_READ_NOT_FIRST;
+                    state = State.SEGMENT_ARRIVED_NOT_FIRST;
                     readInternal();
                 }
             }
@@ -430,20 +430,16 @@ public final class EmbeddedQueue {
             }
             log.info("reading, state=" + state);
             if (state == State.CANCELLED) {
-                log.info("abort read because cancelled");
                 return;
             } else if (state == State.ADVANCING_TO_NEXT_SEGMENT) {
                 return;
             } else if (state == State.WAITING_FIRST_SEGMENT) {
                 return;
             } else {
-                if (f == null) {
+                if (state == State.FIRST_SEGMENT_ARRIVED || state == State.SEGMENT_ARRIVED_NOT_FIRST) {
                     try {
-                        if (segment == null) {
-                            throw new NullPointerException("segment is null , state=" + state);
-                        }
                         f = new RandomAccessFile(segment.file, "rw");
-                        if (state == State.READY_TO_READ_FIRST) {
+                        if (state == State.FIRST_SEGMENT_ARRIVED) {
                             long segmentOffset = Long.valueOf(segment.file.getName());
                             f.seek(offset - segmentOffset);
                         } else {
