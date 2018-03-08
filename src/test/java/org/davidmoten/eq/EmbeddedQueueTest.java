@@ -15,9 +15,13 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
+import java.util.stream.Collectors;
 
 import org.davidmoten.eq.EmbeddedQueue.Reader;
+import org.junit.Assert;
 import org.junit.Test;
+
+import com.github.davidmoten.guavamini.Lists;
 
 public class EmbeddedQueueTest {
 
@@ -36,10 +40,8 @@ public class EmbeddedQueueTest {
         q.addMessage(0, "boo".getBytes());
         q.addMessage(1, "you".getBytes());
         reader.request(5);
-        Thread.sleep(500);
+        waitForMessages(out, "boo", "you");
         reader.cancel();
-        assertEquals(30, out.bytes().length);
-        assertEquals(Arrays.asList("boo", "you"), messages(out.bytes()));
     }
 
     @Test
@@ -57,29 +59,44 @@ public class EmbeddedQueueTest {
         q.addMessage(0, "boo".getBytes());
         q.addMessage(1, "you".getBytes());
         reader.request(5);
-        Thread.sleep(500);
-        assertEquals(15, out.bytes().length);
-        assertEquals(Arrays.asList("you"), messages(out.bytes()));
+        waitForMessages(out, "you");
     }
 
     @Test
     public void testMultipleSegments() throws IOException, InterruptedException {
-        Path directory = Files.createTempDirectory(new File("target").toPath(), "test");
-        SynchronizedOutputStream out = new SynchronizedOutputStream();
-        EmbeddedQueue q = EmbeddedQueue //
-                .directory(directory.toFile()) //
-                .maxSegmentSize(5) //
-                .addSegmentMaxWaitTime(30, TimeUnit.SECONDS) //
-                .messageBufferSize(8192) //
-                .build();
-        Reader reader = q.readFromOffset(0, out);
-        reader.start();
-        q.addMessage(0, "boo".getBytes());
-        q.addMessage(1, "you".getBytes());
-        reader.request(5);
-        Thread.sleep(500);
-        assertEquals(Arrays.asList("boo", "you"), messages(out.bytes()));
-        assertEquals(30, out.bytes().length);
+        for (int i = 0; i < 10; i++) {
+            Path directory = Files.createTempDirectory(new File("target").toPath(), "test");
+            SynchronizedOutputStream out = new SynchronizedOutputStream();
+            EmbeddedQueue q = EmbeddedQueue //
+                    .directory(directory.toFile()) //
+                    .maxSegmentSize(5) //
+                    .addSegmentMaxWaitTime(30, TimeUnit.SECONDS) //
+                    .messageBufferSize(8192) //
+                    .build();
+            Reader reader = q.readFromOffset(0, out);
+            reader.start();
+            q.addMessage(0, "boo".getBytes());
+            q.addMessage(1, "you".getBytes());
+            reader.request(5);
+            waitForMessages(out, "boo", "you");
+            reader.cancel();
+        }
+    }
+
+    private void waitForMessages(SynchronizedOutputStream out, String... messages)
+            throws InterruptedException, IOException {
+        boolean ok = false;
+        List<String> list = Arrays.stream(messages).collect(Collectors.toList());
+        for (int j = 0; j < 50; j++) {
+            Thread.sleep(10);
+            if (list.equals(messages(out.bytes()))) {
+                ok = true;
+                break;
+            }
+        }
+        if (!ok) {
+            Assert.fail();
+        }
     }
 
     private static List<String> messages(byte[] bytes) throws IOException {
@@ -102,7 +119,7 @@ public class EmbeddedQueueTest {
     private static final class SynchronizedOutputStream extends OutputStream {
 
         private final ByteArrayOutputStream bytes = new ByteArrayOutputStream();
-
+        
         @Override
         public void write(int b) throws IOException {
             synchronized (this) {
