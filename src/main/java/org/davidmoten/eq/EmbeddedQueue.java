@@ -279,6 +279,8 @@ public final class EmbeddedQueue {
     }
 
     static final class Segment {
+        // TODO fixed size segments with messages partitioned across segments when
+        // necessary
         private static final String READ_WRITE = "rw";
 
         final long startOffset;
