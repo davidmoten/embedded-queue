@@ -356,7 +356,7 @@ public final class EmbeddedQueue {
         private enum State {
             WAITING_FIRST_SEGMENT, //
             SEGMENT_ARRIVED_NOT_FIRST, //
-            FIRST_SEGMENT_ARRIVED, //
+            SEGMENT_ARRIVED_FIRST, //
             ADVANCING_TO_NEXT_SEGMENT, //
             REQUESTS_MET, //
             NO_MORE_AVAILABLE, //
@@ -430,7 +430,7 @@ public final class EmbeddedQueue {
             if (state == State.WAITING_FIRST_SEGMENT) {
                 if (nextSegment.startOffset() + nextSegment.file.length() > offset) {
                     segment = nextSegment;
-                    state = State.FIRST_SEGMENT_ARRIVED;
+                    state = State.SEGMENT_ARRIVED_FIRST;
                     readInternal();
                 } else {
                     eq.requestNextSegment(this, nextSegment, offset);
@@ -459,10 +459,10 @@ public final class EmbeddedQueue {
             } else if (state == State.WAITING_FIRST_SEGMENT) {
                 return;
             } else {
-                if (state == State.FIRST_SEGMENT_ARRIVED || state == State.SEGMENT_ARRIVED_NOT_FIRST) {
+                if (state == State.SEGMENT_ARRIVED_FIRST || state == State.SEGMENT_ARRIVED_NOT_FIRST) {
                     try {
                         f = new RandomAccessFile(segment.file, "rw");
-                        if (state == State.FIRST_SEGMENT_ARRIVED) {
+                        if (state == State.SEGMENT_ARRIVED_FIRST) {
                             long segmentOffset = Long.valueOf(segment.file.getName());
                             f.seek(offset - segmentOffset);
                         } else {
