@@ -288,8 +288,8 @@ public final class EmbeddedQueue {
 
         RandomAccessFile w;
 
-        Segment(long offset, File file, File index) {
-            this.startOffset = offset;
+        Segment(long startOffset, File file, File index) {
+            this.startOffset = startOffset;
             Preconditions.checkNotNull(file);
             Preconditions.checkNotNull(index);
             this.file = file;
@@ -340,13 +340,14 @@ public final class EmbeddedQueue {
         }
 
         public long startOffset() {
-            return Long.valueOf(file.getName());
+            return startOffset;
         }
 
     }
 
     public static final class Reader {
 
+        // desired starting offset
         private final long offset;
         private final OutputStream out;
 
