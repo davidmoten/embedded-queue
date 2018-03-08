@@ -310,7 +310,6 @@ public final class EmbeddedQueue {
                     }
                 }
                 long position = w.getFilePointer();
-                // TODO don't need to write this because reader can calculate?
                 w.writeLong(offset);
                 w.write(message);
                 w.writeLong(crc.getValue());
@@ -504,13 +503,14 @@ public final class EmbeddedQueue {
                         result = State.ADVANCING_TO_NEXT_SEGMENT;
                         advanceToNextFile();
                         break;
-                    } else if (length + f.getFilePointer() > f.length()) {
+                    } else if (length + OFFSET_NUM_BYTES - LENGTH_NUM_BYTES + f.getFilePointer() > f.length()) {
                         reportError("message in file " + segment.file + " at position " + startPosition
                                 + " is longer than the length of the file");
                         result = State.ADVANCING_TO_NEXT_SEGMENT;
                         advanceToNextFile();
                         break;
                     } else {
+                        // read position is just after length field
                         final byte[] message;
                         if (messageBuffer.length >= length) {
                             message = messageBuffer;
