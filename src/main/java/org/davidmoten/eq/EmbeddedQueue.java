@@ -364,6 +364,8 @@ public final class EmbeddedQueue {
         }
 
         Segment segment;
+
+        // should only be accessed by Reader methods
         private State state;
 
         // synchronized by wip
@@ -376,7 +378,7 @@ public final class EmbeddedQueue {
             this.messageBuffer = new byte[messageBufferSize];
             this.state = State.WAITING_FIRST_SEGMENT;
         }
-        
+
         public void request(long n) {
             if (n <= 0) {
                 return; // NOOP
@@ -397,8 +399,8 @@ public final class EmbeddedQueue {
                 eq.addReader(this);
             }
         }
-        
-        //END OF PUBLIC API
+
+        // END OF PUBLIC API
 
         void segmentAdded() {
             worker.schedule(() -> segmentAddedInternal());
@@ -408,7 +410,7 @@ public final class EmbeddedQueue {
             Preconditions.checkNotNull(nextSegment);
             worker.schedule(() -> nextSegmentInternal(nextSegment));
         }
-        
+
         void read() {
             // TODO ensure that don't schedule too many reads
             // don't want to blow out heap with queued tasks
@@ -444,7 +446,7 @@ public final class EmbeddedQueue {
                 }
             }
         }
-        
+
         // access to this method must be serialized
         // as it does io it should be run in an io thread
         private void readInternal() {
