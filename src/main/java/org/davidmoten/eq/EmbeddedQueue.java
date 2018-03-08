@@ -347,6 +347,7 @@ public final class EmbeddedQueue {
         private EmbeddedQueue eq;
 
         private final AtomicBoolean once = new AtomicBoolean(false);
+        private final AtomicInteger wip = new AtomicInteger();
         private final Worker worker = Schedulers.io().createWorker();
         private final AtomicLong requested = new AtomicLong();
         private final byte[] messageBuffer;
@@ -412,13 +413,16 @@ public final class EmbeddedQueue {
         }
 
         void read() {
-            // TODO ensure that don't schedule too many reads
+            // the non-blocking technique using wip is to
+            // ensure that we don't schedule too many reads
             // don't want to blow out heap with queued tasks
             // just because writing is happening faster than
             // reading
-            worker.schedule(() -> {
-                readInternal();
-            });
+            if (wip.getAndIncrement() == 0) {
+                worker.schedule(() -> {
+                    readInternal();
+                });
+            }
         }
 
         private void segmentAddedInternal() {
@@ -450,33 +454,40 @@ public final class EmbeddedQueue {
         // access to this method must be serialized
         // as it does io it should be run in an io thread
         private void readInternal() {
-            if (cancelled) {
-                return;
-            }
-            log.info("reading, state=" + state);
-            if (state == State.CANCELLED) {
-                return;
-            } else if (state == State.ADVANCING_TO_NEXT_SEGMENT) {
-                return;
-            } else if (state == State.WAITING_FIRST_SEGMENT) {
-                return;
-            } else {
-                if (state == State.SEGMENT_ARRIVED_FIRST || state == State.SEGMENT_ARRIVED_NOT_FIRST) {
-                    try {
-                        f = new RandomAccessFile(segment.file, "rw");
-                        if (state == State.SEGMENT_ARRIVED_FIRST) {
-                            long segmentOffset = Long.valueOf(segment.file.getName());
-                            f.seek(offset - segmentOffset);
-                        } else {
-                            // start from beginning of segment
-                            log.info("moving to beginning of file, state=" + state);
-                            f.seek(0);
-                        }
-                    } catch (IOException e) {
-                        throw new IORuntimeException(e);
-                    }
+            int missed = 1;
+            while (true) {
+                if (cancelled) {
+                    return;
                 }
-                state = readInternal(requested, out);
+                log.info("reading, state=" + state);
+                if (state == State.CANCELLED) {
+                    return;
+                } else if (state == State.ADVANCING_TO_NEXT_SEGMENT) {
+                    return;
+                } else if (state == State.WAITING_FIRST_SEGMENT) {
+                    return;
+                } else {
+                    if (state == State.SEGMENT_ARRIVED_FIRST || state == State.SEGMENT_ARRIVED_NOT_FIRST) {
+                        try {
+                            f = new RandomAccessFile(segment.file, "rw");
+                            if (state == State.SEGMENT_ARRIVED_FIRST) {
+                                long segmentOffset = Long.valueOf(segment.file.getName());
+                                f.seek(offset - segmentOffset);
+                            } else {
+                                // start from beginning of segment
+                                log.info("moving to beginning of file, state=" + state);
+                                f.seek(0);
+                            }
+                        } catch (IOException e) {
+                            throw new IORuntimeException(e);
+                        }
+                    }
+                    state = readInternal(requested, out);
+                }
+                missed = wip.addAndGet(-missed);
+                if (missed == 0) {
+                    return;
+                }
             }
         }
 
