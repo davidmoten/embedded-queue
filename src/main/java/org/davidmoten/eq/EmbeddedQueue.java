@@ -359,8 +359,7 @@ public final class EmbeddedQueue {
             SEGMENT_ARRIVED_NOT_FIRST, //
             SEGMENT_ARRIVED_FIRST, //
             ADVANCING_TO_NEXT_SEGMENT, //
-            REQUESTS_MET, //
-            NO_MORE_AVAILABLE, //
+            REQUESTS_MET_OR_NO_MORE_AVAILABLE, //
             CANCELLED
         }
 
@@ -512,7 +511,7 @@ public final class EmbeddedQueue {
             try {
                 while (true) {
                     if (e == r) {
-                        result = State.REQUESTS_MET;
+                        result = State.REQUESTS_MET_OR_NO_MORE_AVAILABLE;
                         break;
                     }
                     long startPosition = f.getFilePointer();
@@ -523,7 +522,7 @@ public final class EmbeddedQueue {
                     if (length == LENGTH_ZERO) {
                         // reset the read
                         f.seek(startPosition);
-                        result = State.NO_MORE_AVAILABLE;
+                        result = State.REQUESTS_MET_OR_NO_MORE_AVAILABLE;
                         break;
                     }
                     if (length == EOF) {
