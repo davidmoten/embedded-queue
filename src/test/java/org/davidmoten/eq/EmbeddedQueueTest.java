@@ -29,7 +29,6 @@ public class EmbeddedQueueTest {
                 .directory(directory.toFile()) //
                 .maxSegmentSize(100) //
                 .addSegmentMaxWaitTime(30, TimeUnit.SECONDS) //
-                .batchSize(2) //
                 .messageBufferSize(8192) //
                 .build();
         Reader reader = q.readFromOffset(0, out);
@@ -50,7 +49,6 @@ public class EmbeddedQueueTest {
                 .directory(directory.toFile()) //
                 .maxSegmentSize(100) //
                 .addSegmentMaxWaitTime(30, TimeUnit.SECONDS) //
-                .batchSize(2) //
                 .messageBufferSize(8192) //
                 .build();
         Reader reader = q.readFromOffset("boo".getBytes().length + q.inputHeaderLength(), out);
@@ -71,7 +69,6 @@ public class EmbeddedQueueTest {
                 .directory(directory.toFile()) //
                 .maxSegmentSize(5) //
                 .addSegmentMaxWaitTime(30, TimeUnit.SECONDS) //
-                .batchSize(2) //
                 .messageBufferSize(8192) //
                 .build();
         Reader reader = q.readFromOffset(0, out);

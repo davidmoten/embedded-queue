@@ -43,15 +43,12 @@ public final class EmbeddedQueue {
     private final File directory;
     private final int maxSegmentSize;
     private final long addSegmentMaxWaitTimeMs;
-    private final int batchSize;
     private final int messageBufferSize;
 
-    private EmbeddedQueue(File directory, int maxSegmentSize, long addSegmentMaxWaitTimeMs, int batchSize,
-            int messageBufferSize) {
+    private EmbeddedQueue(File directory, int maxSegmentSize, long addSegmentMaxWaitTimeMs, int messageBufferSize) {
         this.directory = directory;
         this.maxSegmentSize = maxSegmentSize;
         this.addSegmentMaxWaitTimeMs = addSegmentMaxWaitTimeMs;
-        this.batchSize = batchSize;
         this.queue = new MpscLinkedQueue<>();
         this.store = new Store();
         this.messageBufferSize = messageBufferSize;
@@ -66,7 +63,6 @@ public final class EmbeddedQueue {
         private final File directory;
         private int maxSegmentSize = 1024 * 1024;
         private long addSegmentMaxWaitTimeMs = 30000;
-        private int batchSize = 1024;
         private int messageBufferSize = 8192;
 
         Builder(File directory) {
@@ -83,18 +79,13 @@ public final class EmbeddedQueue {
             return this;
         }
 
-        public Builder batchSize(int value) {
-            this.batchSize = value;
-            return this;
-        }
-
         public Builder messageBufferSize(int value) {
             this.messageBufferSize = value;
             return this;
         }
 
         public EmbeddedQueue build() {
-            return new EmbeddedQueue(directory, maxSegmentSize, addSegmentMaxWaitTimeMs, batchSize, messageBufferSize);
+            return new EmbeddedQueue(directory, maxSegmentSize, addSegmentMaxWaitTimeMs, messageBufferSize);
         }
     }
 
@@ -104,7 +95,7 @@ public final class EmbeddedQueue {
     }
 
     public Reader readFromOffset(long offset, OutputStream out) {
-        return new Reader(offset, out, this, batchSize, messageBufferSize);
+        return new Reader(offset, out, this, messageBufferSize);
     }
 
     public int inputHeaderLength() {
@@ -354,7 +345,6 @@ public final class EmbeddedQueue {
 
         // not final so can set to null for GC and avoid
         private EmbeddedQueue eq;
-        private final long batchSize;
 
         private final AtomicBoolean once = new AtomicBoolean(false);
         private final Worker worker = Schedulers.io().createWorker();
@@ -370,7 +360,6 @@ public final class EmbeddedQueue {
             ADVANCING_TO_NEXT_SEGMENT, //
             REQUESTS_MET, //
             NO_MORE_AVAILABLE, //
-            BATCH_READ, //
             CANCELLED
         }
 
@@ -380,11 +369,10 @@ public final class EmbeddedQueue {
         // synchronized by wip
         private RandomAccessFile f;
 
-        public Reader(long offset, OutputStream out, EmbeddedQueue eq, long batchSize, int messageBufferSize) {
+        public Reader(long offset, OutputStream out, EmbeddedQueue eq, int messageBufferSize) {
             this.offset = offset;
             this.out = out;
             this.eq = eq;
-            this.batchSize = batchSize;
             this.messageBuffer = new byte[messageBufferSize];
             this.state = State.WAITING_FIRST_SEGMENT;
         }
@@ -453,12 +441,7 @@ public final class EmbeddedQueue {
                         throw new IORuntimeException(e);
                     }
                 }
-                state = readInternal(requested, batchSize, out);
-                if (state == State.BATCH_READ) {
-                    // there may be more messages waiting (and there are sufficient requests) so try
-                    // again but it should be scheduled so that other readers can get a turn to emit
-                    eq.attemptRead(this);
-                }
+                state = readInternal(requested, out);
             }
         }
 
@@ -474,12 +457,11 @@ public final class EmbeddedQueue {
          * @param out
          * @return
          */
-        State readInternal(AtomicLong requested, long batchSize, OutputStream out) {
+        State readInternal(AtomicLong requested, OutputStream out) {
 
             log.info("reading from " + segment.file);
             long r = requested.get();
             long e = 0;
-            long attempts = 0;
             State result = null;
             try {
                 while (true) {
@@ -532,15 +514,6 @@ public final class EmbeddedQueue {
                             e++;
                             log.info("{} bytes written to output={}", length, new String(message, 0, length));
                         }
-                        attempts++;
-                    }
-                    if (attempts == batchSize) {
-                        if (e == r) {
-                            result = State.REQUESTS_MET;
-                        } else {
-                            result = State.BATCH_READ;
-                        }
-                        break;
                     }
                 }
                 Util.addRequest(requested, -e);
