@@ -10,3 +10,4 @@ Features
 * supports multiple concurrent consumers
 * uses Kafka-like reads (give me all records since time t/offset)
 * maximize use of non-blocking (persistence guarantee means that writes block but reads can use non-blocking
+* focus on correctness then speed (while maintaining correctness)

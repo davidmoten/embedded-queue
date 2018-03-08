@@ -120,9 +120,6 @@ public final class EmbeddedQueue {
             }
         }
         store.writer.segment.size += numBytes;
-        if (store.writer.segment.size >= maxSegmentSize) {
-            log.info("segments={}", store.segments);
-        }
         store.writer.segment.write(time, store.writer.offset, message);
         store.writer.offset += numBytes;
         queue.offer(store.writer.segment);
@@ -179,6 +176,11 @@ public final class EmbeddedQueue {
         drain();
     }
 
+    void removeReader(Reader reader) {
+        queue.offer(new RequestRemoveReader(reader));
+        drain();
+    }
+
     void drain() {
         // must be non-blocking
         if (wip.getAndIncrement() == 0) {
@@ -229,6 +231,8 @@ public final class EmbeddedQueue {
                                 }
                             }
                         }
+                    } else if (o instanceof RequestRemoveReader) {
+                        store.segments.remove(o);
                     }
                 }
                 missed = wip.addAndGet(-missed);
@@ -380,9 +384,7 @@ public final class EmbeddedQueue {
         }
 
         public void request(long n) {
-            if (n <= 0) {
-                return; // NOOP
-            }
+            Preconditions.checkArgument(n > 0, "n must be greater than 0");
             addRequest(requested, n);
 
             // indicate that requests exist
@@ -392,6 +394,7 @@ public final class EmbeddedQueue {
         public void cancel() {
             cancelled = true;
             worker.dispose();
+            eq.removeReader(this);
         }
 
         public void start() {
@@ -604,6 +607,15 @@ public final class EmbeddedQueue {
         private final Reader reader;
 
         RequestAddReader(Reader reader) {
+            this.reader = reader;
+        }
+    }
+
+    static final class RequestRemoveReader {
+
+        private final Reader reader;
+
+        RequestRemoveReader(Reader reader) {
             this.reader = reader;
         }
     }

@@ -37,6 +37,7 @@ public class EmbeddedQueueTest {
         q.addMessage(1, "you".getBytes());
         reader.request(5);
         Thread.sleep(500);
+        reader.cancel();
         assertEquals(30, out.bytes().length);
         assertEquals(Arrays.asList("boo", "you"), messages(out.bytes()));
     }
