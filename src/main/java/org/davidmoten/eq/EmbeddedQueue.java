@@ -180,7 +180,7 @@ public final class EmbeddedQueue {
         } catch (IOException e) {
             throw new IORuntimeException(e);
         }
-        return new Segment(file, index);
+        return new Segment(offset, file, index);
     }
 
     void addReader(Reader reader) {
@@ -234,6 +234,7 @@ public final class EmbeddedQueue {
                                     if (i < store.segments.size() - 1) {
                                         r.reader.nextSegment(store.segments.get(i + 1));
                                     }
+                                    // otherwise no new segment available yet
                                 }
                             }
                         }
@@ -280,13 +281,15 @@ public final class EmbeddedQueue {
     static final class Segment {
         private static final String READ_WRITE = "rw";
 
+        final long startOffset;
         final File file;
         final File index;
         int size;
 
         RandomAccessFile w;
 
-        Segment(File file, File index) {
+        Segment(long offset, File file, File index) {
+            this.startOffset = offset;
             Preconditions.checkNotNull(file);
             Preconditions.checkNotNull(index);
             this.file = file;
@@ -400,7 +403,7 @@ public final class EmbeddedQueue {
         }
 
         private void nextSegmentInternal(Segment nextSegment) {
-            log.info("nextSegmentInternal, state="+ state);
+            log.info("nextSegmentInternal, state=" + state + ", file=" + nextSegment.file.getName());
             if (state == State.WAITING_FIRST_SEGMENT) {
                 if (nextSegment.startOffset() + nextSegment.file.length() > offset) {
                     segment = nextSegment;
@@ -410,9 +413,12 @@ public final class EmbeddedQueue {
                     eq.requestNextSegment(this, nextSegment, offset);
                 }
             } else if (state == State.ADVANCING_TO_NEXT_SEGMENT) {
-                segment = nextSegment;
-                state = State.READY_TO_READ_NOT_FIRST;
-                readInternal();
+                // check that is not an old advance result
+                if (segment.startOffset < nextSegment.startOffset) {
+                    segment = nextSegment;
+                    state = State.READY_TO_READ_NOT_FIRST;
+                    readInternal();
+                }
             }
         }
 
@@ -552,7 +558,6 @@ public final class EmbeddedQueue {
 
         private void advanceToNextFile() {
             Segment seg = segment;
-            segment = null;
             closeQuietly(f);
             f = null;
             eq.requestNextSegment(this, seg, offset);
