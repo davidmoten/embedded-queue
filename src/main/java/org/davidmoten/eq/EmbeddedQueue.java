@@ -219,8 +219,7 @@ public final class EmbeddedQueue {
                         if (r.segment == null) {
                             if (!store.segments.isEmpty()) {
                                 // send the first segment (if not past offset then another segment
-                                // might be
-                                // requested by the reader)
+                                // might be requested by the reader)
                                 r.reader.nextSegment(store.segments.get(0));
                             }
                         } else {
@@ -235,7 +234,7 @@ public final class EmbeddedQueue {
                             }
                         }
                     } else if (o instanceof RequestRemoveReader) {
-                        store.segments.remove(o);
+                        store.readers.remove(((RequestRemoveReader) o).reader);
                     }
                 }
                 missed = wip.addAndGet(-missed);
@@ -414,7 +413,7 @@ public final class EmbeddedQueue {
             this.state = state;
             log.info("set state = {}", state);
         }
-
+        
         void segmentAdded() {
             worker.schedule(() -> segmentAddedInternal());
         }
@@ -614,7 +613,7 @@ public final class EmbeddedQueue {
 
     static final class RequestRemoveReader {
 
-        private final Reader reader;
+        final Reader reader;
 
         RequestRemoveReader(Reader reader) {
             this.reader = reader;
