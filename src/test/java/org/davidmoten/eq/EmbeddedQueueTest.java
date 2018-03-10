@@ -1,7 +1,5 @@
 package org.davidmoten.eq;
 
-import static org.junit.Assert.assertEquals;
-
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.DataInputStream;
@@ -20,10 +18,12 @@ import java.util.stream.Collectors;
 import org.davidmoten.eq.EmbeddedQueue.Reader;
 import org.junit.Assert;
 import org.junit.Test;
-
-import com.github.davidmoten.guavamini.Lists;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 public class EmbeddedQueueTest {
+
+    private static final Logger log = LoggerFactory.getLogger(EmbeddedQueueTest.class);
 
     @Test
     public void testOneSegmentWriteAndRead() throws IOException, InterruptedException {
@@ -65,6 +65,7 @@ public class EmbeddedQueueTest {
     @Test
     public void testMultipleSegments() throws IOException, InterruptedException {
         for (int i = 0; i < 1000; i++) {
+            log.info("=========================");
             Path directory = Files.createTempDirectory(new File("target").toPath(), "test");
             SynchronizedOutputStream out = new SynchronizedOutputStream();
             EmbeddedQueue q = EmbeddedQueue //
@@ -89,15 +90,17 @@ public class EmbeddedQueueTest {
             throws InterruptedException, IOException {
         boolean ok = false;
         List<String> list = Arrays.stream(messages).collect(Collectors.toList());
+        List<String> msgs = null;
         for (int j = 0; j < 50; j++) {
             Thread.sleep(10);
-            if (list.equals(messages(out.bytes()))) {
+            msgs = messages(out.bytes());
+            if (list.equals(msgs)) {
                 ok = true;
                 break;
             }
         }
         if (!ok) {
-            Assert.fail();
+            Assert.fail("expected " + list + " was " + msgs);
         }
     }
 

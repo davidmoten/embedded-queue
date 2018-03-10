@@ -45,7 +45,8 @@ public final class EmbeddedQueue {
     private final long addSegmentMaxWaitTimeMs;
     private final int messageBufferSize;
 
-    private EmbeddedQueue(File directory, int maxSegmentSize, long addSegmentMaxWaitTimeMs, int messageBufferSize) {
+    private EmbeddedQueue(File directory, int maxSegmentSize, long addSegmentMaxWaitTimeMs,
+            int messageBufferSize) {
         this.directory = directory;
         this.maxSegmentSize = maxSegmentSize;
         this.addSegmentMaxWaitTimeMs = addSegmentMaxWaitTimeMs;
@@ -85,7 +86,8 @@ public final class EmbeddedQueue {
         }
 
         public EmbeddedQueue build() {
-            return new EmbeddedQueue(directory, maxSegmentSize, addSegmentMaxWaitTimeMs, messageBufferSize);
+            return new EmbeddedQueue(directory, maxSegmentSize, addSegmentMaxWaitTimeMs,
+                    messageBufferSize);
         }
     }
 
@@ -216,7 +218,8 @@ public final class EmbeddedQueue {
                         RequestNextSegment r = (RequestNextSegment) o;
                         if (r.segment == null) {
                             if (!store.segments.isEmpty()) {
-                                // send the first segment (if not past offset then another segment might be
+                                // send the first segment (if not past offset then another segment
+                                // might be
                                 // requested by the reader)
                                 r.reader.nextSegment(store.segments.get(0));
                             }
@@ -316,7 +319,8 @@ public final class EmbeddedQueue {
                 }
                 // get position ready for next write (just after length bytes)
                 w.seek(position2);
-                log.info("message written to " + file + " at offset " + (position - LENGTH_NUM_BYTES));
+                log.info("message written to " + file + " at offset "
+                        + (position - LENGTH_NUM_BYTES));
             } catch (IOException e) {
                 throw new IORuntimeException(e);
             }
@@ -364,7 +368,8 @@ public final class EmbeddedQueue {
             SEGMENT_ARRIVED_FIRST, //
             ADVANCING_TO_NEXT_SEGMENT, //
             REQUESTS_MET_OR_NO_MORE_AVAILABLE, //
-            CANCELLED
+            CANCELLED, //
+            HAS_READ
         }
 
         Segment segment;
@@ -404,6 +409,11 @@ public final class EmbeddedQueue {
         }
 
         // END OF PUBLIC API
+        
+        private void setState(State state) {
+            this.state = state;
+            log.info("set state = {}", state);
+        }
 
         void segmentAdded() {
             worker.schedule(() -> segmentAddedInternal());
@@ -434,22 +444,23 @@ public final class EmbeddedQueue {
         }
 
         private void nextSegmentInternal(Segment nextSegment) {
-            log.info("nextSegmentInternal, state=" + state + ", file=" + nextSegment.file.getName());
+            log.info(
+                    "nextSegmentInternal, state=" + state + ", file=" + nextSegment.file.getName());
             if (state == State.WAITING_FIRST_SEGMENT) {
                 if (nextSegment.startOffset() + nextSegment.file.length() > offset) {
                     segment = nextSegment;
-                    state = State.SEGMENT_ARRIVED_FIRST;
+                    setState(State.SEGMENT_ARRIVED_FIRST);
                     readInternal();
                 } else {
                     eq.requestNextSegment(this, nextSegment, offset);
                 }
             } else if (state == State.ADVANCING_TO_NEXT_SEGMENT) {
                 // check that is not an old advance result
-                if (segment.startOffset < nextSegment.startOffset) {
-                    segment = nextSegment;
-                    state = State.SEGMENT_ARRIVED_NOT_FIRST;
-                    readInternal();
-                }
+                // if (segment.startOffset < nextSegment.startOffset) {
+                segment = nextSegment;
+                setState(State.SEGMENT_ARRIVED_NOT_FIRST);
+                readInternal();
+                // }
             }
         }
 
@@ -469,10 +480,11 @@ public final class EmbeddedQueue {
                 } else if (state == State.WAITING_FIRST_SEGMENT) {
                     return;
                 } else {
-                    if (state == State.SEGMENT_ARRIVED_FIRST || state == State.SEGMENT_ARRIVED_NOT_FIRST) {
+                    if (state == State.SEGMENT_ARRIVED_FIRST
+                            || state == State.SEGMENT_ARRIVED_NOT_FIRST) {
                         openRandomAccessFile();
                     }
-                    state = readInternal(requested, out);
+                    readInternal(requested, out);
                 }
                 missed = wip.addAndGet(-missed);
                 if (missed == 0) {
@@ -497,28 +509,15 @@ public final class EmbeddedQueue {
             }
         }
 
-        /**
-         * Returns true if and only if no more messages were found or if batchSize was
-         * reached in terms of attempted emissions to the {@code OutputStream}.
-         * Attempted emissions include messages that were determined not to be valid
-         * (due to length exceeding available bytes in the file or an unexpected CRC
-         * checksum).
-         * 
-         * @param requested
-         * @param batchSize
-         * @param out
-         * @return
-         */
-        State readInternal(AtomicLong requested, OutputStream out) {
+        void readInternal(AtomicLong requested, OutputStream out) {
 
             log.info("reading from " + segment.file);
             long r = requested.get();
             long e = 0;
-            State result = null;
             try {
                 while (true) {
                     if (e == r) {
-                        result = State.REQUESTS_MET_OR_NO_MORE_AVAILABLE;
+                        setState(State.REQUESTS_MET_OR_NO_MORE_AVAILABLE);
                         break;
                     }
                     long startPosition = f.getFilePointer();
@@ -529,21 +528,23 @@ public final class EmbeddedQueue {
                     if (length == LENGTH_ZERO) {
                         // reset the read
                         f.seek(startPosition);
-                        result = State.REQUESTS_MET_OR_NO_MORE_AVAILABLE;
+                        setState(State.REQUESTS_MET_OR_NO_MORE_AVAILABLE);
                         break;
                     }
                     if (length == EOF) {
-                        log.info("advancing to next segment");
-                        result = State.ADVANCING_TO_NEXT_SEGMENT;
+                        log.info("advancing to next segment due EOF");
+                        setState(State.ADVANCING_TO_NEXT_SEGMENT);
                         advanceToNextFile();
                         break;
-                    } else if (length + OFFSET_NUM_BYTES - LENGTH_NUM_BYTES + f.getFilePointer() > f.length()) {
-                        reportError("message in file " + segment.file + " at position " + startPosition
-                                + " is longer than the length of the file");
-                        result = State.ADVANCING_TO_NEXT_SEGMENT;
+                    } else if (length + OFFSET_NUM_BYTES - LENGTH_NUM_BYTES + f.getFilePointer() > f
+                            .length()) {
+                        reportError("message in file " + segment.file + " at position "
+                                + startPosition + " is longer than the length of the file");
+                        setState(State.ADVANCING_TO_NEXT_SEGMENT);
                         advanceToNextFile();
                         break;
                     } else {
+                        setState(State.HAS_READ);
                         // read position is just after length field
                         final byte[] message;
                         if (messageBuffer.length >= length) {
@@ -557,19 +558,19 @@ public final class EmbeddedQueue {
                         CRC32 crc = new CRC32();
                         crc.update(message, 0, length);
                         if (crc.getValue() != expected) {
-                            reportError("crc doesn't match for message in file " + segment.file + " at position "
-                                    + startPosition);
+                            reportError("crc doesn't match for message in file " + segment.file
+                                    + " at position " + startPosition);
                         } else {
                             out.write(Util.toBytes(length));
                             out.write(Util.toBytes(offset));
                             out.write(message, 0, length);
                             e++;
-                            log.info("{} bytes written to output={}", length, new String(message, 0, length));
+                            log.info("{} bytes written to output={}", length,
+                                    new String(message, 0, length));
                         }
                     }
                 }
                 Util.addRequest(requested, -e);
-                return result;
             } catch (IOException ex) {
                 cancel();
                 throw new IORuntimeException(ex);
