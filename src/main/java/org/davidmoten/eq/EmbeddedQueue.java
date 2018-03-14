@@ -640,6 +640,11 @@ public final class EmbeddedQueue {
             this.offset = offset;
         }
 
+        @Override
+        public String toString() {
+            return "RequestNextSegment [segment=" + segment + ", reader=" + reader + ", offset=" + offset + "]";
+        }
+        
     }
 
 }
