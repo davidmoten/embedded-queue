@@ -91,7 +91,7 @@ public class EmbeddedQueueTest {
         boolean ok = false;
         List<String> list = Arrays.stream(messages).collect(Collectors.toList());
         List<String> msgs = null;
-        for (int j = 0; j < 50; j++) {
+        for (int j = 0; j < 500000; j++) {
             Thread.sleep(10);
             msgs = messages(out.bytes());
             if (list.equals(msgs)) {

@@ -45,8 +45,7 @@ public final class EmbeddedQueue {
     private final long addSegmentMaxWaitTimeMs;
     private final int messageBufferSize;
 
-    private EmbeddedQueue(File directory, int maxSegmentSize, long addSegmentMaxWaitTimeMs,
-            int messageBufferSize) {
+    private EmbeddedQueue(File directory, int maxSegmentSize, long addSegmentMaxWaitTimeMs, int messageBufferSize) {
         this.directory = directory;
         this.maxSegmentSize = maxSegmentSize;
         this.addSegmentMaxWaitTimeMs = addSegmentMaxWaitTimeMs;
@@ -86,8 +85,7 @@ public final class EmbeddedQueue {
         }
 
         public EmbeddedQueue build() {
-            return new EmbeddedQueue(directory, maxSegmentSize, addSegmentMaxWaitTimeMs,
-                    messageBufferSize);
+            return new EmbeddedQueue(directory, maxSegmentSize, addSegmentMaxWaitTimeMs, messageBufferSize);
         }
     }
 
@@ -115,15 +113,21 @@ public final class EmbeddedQueue {
         // and allow for it to be written to a segment
         // TODO add unit test for that situation
         if (store.writer.segment.size > 0) {
-            int total = store.writer.segment.size + numBytes;
+            int total = store.writer.segment.size + numBytes + inputHeaderLength();
             if (total > maxSegmentSize) {
                 store.writer.segment.closeForWrite();
                 addAndWaitForSegment();
             }
         }
-        store.writer.segment.size += numBytes;
+        if (store.writer.segment.size == 0) {
+            // add this because all segments have a trailing ZERO_LENGTH/EOF indicator
+            store.writer.segment.size += LENGTH_NUM_BYTES;
+            store.writer.offset = 0;
+        }
+        store.writer.segment.size += numBytes + inputHeaderLength();
         store.writer.segment.write(time, store.writer.offset, message);
-        store.writer.offset += numBytes;
+        log.info("write size=" + store.writer.segment.size + ", actual=" + store.writer.segment.file.length());
+        store.writer.offset += numBytes + inputHeaderLength();
         queue.offer(store.writer.segment);
         drain();
         return true;
@@ -279,6 +283,7 @@ public final class EmbeddedQueue {
         // TODO fixed size segments with messages partitioned across segments when
         // necessary
         private static final String READ_WRITE = "rw";
+        private static final Logger log = LoggerFactory.getLogger(Segment.class);
 
         final long startOffset;
         final File file;
@@ -318,8 +323,7 @@ public final class EmbeddedQueue {
                 }
                 // get position ready for next write (just after length bytes)
                 w.seek(position2);
-                log.info("message written to " + file + " at offset "
-                        + (position - LENGTH_NUM_BYTES));
+                log.info("message written to " + file + " at offset " + (position - LENGTH_NUM_BYTES));
             } catch (IOException e) {
                 throw new IORuntimeException(e);
             }
@@ -346,6 +350,8 @@ public final class EmbeddedQueue {
 
     public static final class Reader {
 
+        private static final Logger log = LoggerFactory.getLogger(Segment.class);
+
         // desired starting offset
         private final long offset;
         private final OutputStream out;
@@ -362,7 +368,7 @@ public final class EmbeddedQueue {
         private volatile boolean cancelled;
 
         private enum State {
-            WAITING_FIRST_SEGMENT, //
+            INITIALIZED, WAITING_FIRST_SEGMENT, //
             SEGMENT_ARRIVED_NOT_FIRST, //
             SEGMENT_ARRIVED_FIRST, //
             ADVANCING_TO_NEXT_SEGMENT, //
@@ -384,7 +390,7 @@ public final class EmbeddedQueue {
             this.out = out;
             this.eq = eq;
             this.messageBuffer = new byte[messageBufferSize];
-            this.state = State.WAITING_FIRST_SEGMENT;
+            this.state = State.INITIALIZED;
         }
 
         public void request(long n) {
@@ -408,12 +414,12 @@ public final class EmbeddedQueue {
         }
 
         // END OF PUBLIC API
-        
+
         private void setState(State state) {
             this.state = state;
             log.info("set state = {}", state);
         }
-        
+
         void segmentAdded() {
             worker.schedule(() -> segmentAddedInternal());
         }
@@ -437,14 +443,17 @@ public final class EmbeddedQueue {
         }
 
         private void segmentAddedInternal() {
-            if (state == State.WAITING_FIRST_SEGMENT) {
+            if (state == State.INITIALIZED) {
+                setState(State.WAITING_FIRST_SEGMENT);
                 eq.requestFirstSegment(this, offset);
+            } else if (state == State.REQUESTS_MET_OR_NO_MORE_AVAILABLE || state == State.HAS_READ) {
+                // if read gets to end of segment can request next
+                readInternal();
             }
         }
 
         private void nextSegmentInternal(Segment nextSegment) {
-            log.info(
-                    "nextSegmentInternal, state=" + state + ", file=" + nextSegment.file.getName());
+            log.info("nextSegmentInternal, state=" + state + ", file=" + nextSegment.file.getName());
             if (state == State.WAITING_FIRST_SEGMENT) {
                 if (nextSegment.startOffset() + nextSegment.file.length() > offset) {
                     segment = nextSegment;
@@ -472,15 +481,16 @@ public final class EmbeddedQueue {
                     return;
                 }
                 log.info("reading, state=" + state);
-                if (state == State.CANCELLED) {
+                if (state == State.INITIALIZED) {
+                    return;
+                } else if (state == State.CANCELLED) {
                     return;
                 } else if (state == State.ADVANCING_TO_NEXT_SEGMENT) {
                     return;
                 } else if (state == State.WAITING_FIRST_SEGMENT) {
                     return;
                 } else {
-                    if (state == State.SEGMENT_ARRIVED_FIRST
-                            || state == State.SEGMENT_ARRIVED_NOT_FIRST) {
+                    if (state == State.SEGMENT_ARRIVED_FIRST || state == State.SEGMENT_ARRIVED_NOT_FIRST) {
                         openRandomAccessFile();
                     }
                     readInternal(requested, out);
@@ -509,7 +519,6 @@ public final class EmbeddedQueue {
         }
 
         void readInternal(AtomicLong requested, OutputStream out) {
-
             log.info("reading from " + segment.file);
             long r = requested.get();
             long e = 0;
@@ -535,10 +544,9 @@ public final class EmbeddedQueue {
                         setState(State.ADVANCING_TO_NEXT_SEGMENT);
                         advanceToNextFile();
                         break;
-                    } else if (length + OFFSET_NUM_BYTES - LENGTH_NUM_BYTES + f.getFilePointer() > f
-                            .length()) {
-                        reportError("message in file " + segment.file + " at position "
-                                + startPosition + " is longer than the length of the file");
+                    } else if (length + OFFSET_NUM_BYTES - LENGTH_NUM_BYTES + f.getFilePointer() > f.length()) {
+                        reportError("message in file " + segment.file + " at position " + startPosition
+                                + " is longer than the length of the file");
                         setState(State.ADVANCING_TO_NEXT_SEGMENT);
                         advanceToNextFile();
                         break;
@@ -557,15 +565,14 @@ public final class EmbeddedQueue {
                         CRC32 crc = new CRC32();
                         crc.update(message, 0, length);
                         if (crc.getValue() != expected) {
-                            reportError("crc doesn't match for message in file " + segment.file
-                                    + " at position " + startPosition);
+                            reportError("crc doesn't match for message in file " + segment.file + " at position "
+                                    + startPosition);
                         } else {
                             out.write(Util.toBytes(length));
                             out.write(Util.toBytes(offset));
                             out.write(message, 0, length);
                             e++;
-                            log.info("{} bytes written to output={}", length,
-                                    new String(message, 0, length));
+                            log.info("{} bytes written to output={}", length, new String(message, 0, length));
                         }
                     }
                 }
@@ -630,6 +637,7 @@ public final class EmbeddedQueue {
     }
 
     static final class RequestNextSegment {
+
         final Segment segment;
         final Reader reader;
         final long offset;
@@ -644,7 +652,7 @@ public final class EmbeddedQueue {
         public String toString() {
             return "RequestNextSegment [segment=" + segment + ", reader=" + reader + ", offset=" + offset + "]";
         }
-        
+
     }
 
 }
