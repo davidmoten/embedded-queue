@@ -71,7 +71,7 @@ public final class StateMachineDefinitions implements Supplier<List<StateMachine
         moreAvailableRequested.to(reading);
         requestedMoreAvailable.to(reading);
         lastWasRead.from(reading);
-        lastWasRead.to(requestedNoneAvailable);
+        lastWasRead.to(requestedMoreAvailable);
         return m;
     }
 
