@@ -1,10 +1,17 @@
-package com.github.davidmoten.fsm.example;
-
-import static java.util.Collections.singleton;
+package org.davidmoten.eq;
 
 import java.util.Arrays;
 import java.util.List;
 import java.util.function.Supplier;
+
+import org.davidmoten.eq.model.EndOfFile;
+import org.davidmoten.eq.model.FirstSegment;
+import org.davidmoten.eq.model.LatestWasRead;
+import org.davidmoten.eq.model.OpenFile;
+import org.davidmoten.eq.model.Read;
+import org.davidmoten.eq.model.Reader;
+import org.davidmoten.eq.model.ReaderAdded;
+import org.davidmoten.eq.model.RequestsMet;
 
 import com.github.davidmoten.fsm.model.State;
 import com.github.davidmoten.fsm.model.StateMachineDefinition;

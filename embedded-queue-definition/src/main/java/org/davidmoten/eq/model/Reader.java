@@ -1,4 +1,4 @@
-package com.github.davidmoten.fsm.example;
+package org.davidmoten.eq.model;
 
 public final class Reader {
 
