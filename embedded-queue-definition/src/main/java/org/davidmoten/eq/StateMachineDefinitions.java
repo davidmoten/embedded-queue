@@ -13,7 +13,7 @@ import org.davidmoten.eq.model.OpenFile;
 import org.davidmoten.eq.model.Read;
 import org.davidmoten.eq.model.Reader;
 import org.davidmoten.eq.model.ReaderAdded;
-import org.davidmoten.eq.model.Request;
+import org.davidmoten.eq.model.HasRequest;
 import org.davidmoten.eq.model.RequestNextSegment;
 import org.davidmoten.eq.model.RequestsMet;
 import org.davidmoten.eq.model.Written;
@@ -40,8 +40,8 @@ public final class StateMachineDefinitions implements Supplier<List<StateMachine
                 .event(FirstSegment.class) //
                 .documentation("<pre>entry/\n" //
                         + "signal OpenFile to self");
-        State<Reader, Request> fileOpened = m.createState("File Opened") //
-                .event(Request.class);
+        State<Reader, HasRequest> fileOpened = m.createState("File Opened") //
+                .event(HasRequest.class);
         State<Reader, Read> reading = m.createState("Reading") //
                 .event(Read.class).documentation("<pre>entry/\n" //
                         + "");
@@ -53,12 +53,12 @@ public final class StateMachineDefinitions implements Supplier<List<StateMachine
                         + "close file;\n" //
                         + "signal RequestNextSegment(reader: self, segmentId: reader.segment.id) to store;\n" //
                         + "</pre>");
-        State<Reader, Request> requestedNoneAvailable = m.createState("Requested None Available") //
-                .event(Request.class);
+        State<Reader, HasRequest> requestedNoneAvailable = m.createState("Requested None Available") //
+                .event(HasRequest.class);
         State<Reader, Written> moreAvailableNoRequests = m
                 .createState("More Available, No Requests").event(Written.class);
-        State<Reader, Request> moreAvailableRequested = m.createState("More Available, Requested")
-                .event(Request.class);
+        State<Reader, HasRequest> moreAvailableRequested = m.createState("More Available, Requested")
+                .event(HasRequest.class);
         State<Reader, Written> requestedMoreAvailable = m.createState("Requested, More Available")
                 .event(Written.class);
         State<Reader, LatestWasRead> latestRead = m.createState("Latest read, Requested")
