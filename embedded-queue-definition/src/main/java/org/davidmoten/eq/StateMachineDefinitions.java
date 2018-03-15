@@ -40,8 +40,8 @@ public final class StateMachineDefinitions implements Supplier<List<StateMachine
                 .event(FirstSegment.class) //
                 .documentation("<pre>entry/\n" //
                         + "signal OpenFile to self");
-        State<Reader, OpenFile> fileOpened = m.createState("File Opened") //
-                .event(OpenFile.class);
+        State<Reader, Request> fileOpened = m.createState("File Opened") //
+                .event(Request.class);
         State<Reader, Read> reading = m.createState("Reading") //
                 .event(Read.class).documentation("<pre>entry/\n" //
                         + "");
@@ -55,19 +55,24 @@ public final class StateMachineDefinitions implements Supplier<List<StateMachine
                         + "</pre>");
         State<Reader, Request> requestedNoneAvailable = m.createState("Requested None Available") //
                 .event(Request.class);
-        State<Reader, Written> moreAvailableNoRequests = m.createState("More Available, No Requests")
+        State<Reader, Written> moreAvailableNoRequests = m
+                .createState("More Available, No Requests").event(Written.class);
+        State<Reader, Request> moreAvailableRequested = m.createState("More Available, Requested")
+                .event(Request.class);
+        State<Reader, Written> requestedMoreAvailable = m.createState("Requested, More Available")
                 .event(Written.class);
-        State<Reader, Request> moreAvailableRequested = m.createState("More Available, Requested").event(Request.class);
-        State<Reader, Written> requestedMoreAvailable = m.createState("Requested, More Available").event(Written.class);
-        State<Reader, LatestWasRead> latestRead = m.createState("Latest read, Requested").event(LatestWasRead.class);
-        State<Reader, RequestNextSegment> requestedNextSegment = m.createState("Requested Next Segment").event(RequestNextSegment.class);
-        State<Reader, NextSegment> hasNextSegment = m.createState("Has Next Segment").event(NextSegment.class);
+        State<Reader, LatestWasRead> latestRead = m.createState("Latest read, Requested")
+                .event(LatestWasRead.class);
+        State<Reader, RequestNextSegment> requestedNextSegment = m
+                .createState("Requested Next Segment").event(RequestNextSegment.class);
+        State<Reader, NextSegment> hasNextSegment = m.createState("Has Next Segment")
+                .event(NextSegment.class);
 
         created //
                 .initial() //
                 .to(hasFirstSegment) //
                 .to(fileOpened) //
-                .to(metRequests); //
+                .to(requestedMoreAvailable); //
         reading.to(closedFile);
         reading.to(metRequests);
         metRequests.to(requestedNoneAvailable);
@@ -80,6 +85,7 @@ public final class StateMachineDefinitions implements Supplier<List<StateMachine
         latestRead.to(requestedMoreAvailable);
         closedFile.to(requestedNextSegment);
         requestedNextSegment.to(hasNextSegment);
+        hasNextSegment.to(requestedMoreAvailable);
         return m;
     }
 
