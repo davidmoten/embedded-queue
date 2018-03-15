@@ -11,7 +11,9 @@ import org.davidmoten.eq.model.OpenFile;
 import org.davidmoten.eq.model.Read;
 import org.davidmoten.eq.model.Reader;
 import org.davidmoten.eq.model.ReaderAdded;
+import org.davidmoten.eq.model.Request;
 import org.davidmoten.eq.model.RequestsMet;
+import org.davidmoten.eq.model.Written;
 
 import com.github.davidmoten.fsm.model.State;
 import com.github.davidmoten.fsm.model.StateMachineDefinition;
@@ -48,18 +50,26 @@ public final class StateMachineDefinitions implements Supplier<List<StateMachine
                         + "close file;\n" //
                         + "signal RequestNextSegment(reader: self, segmentId: reader.segment.id) to store;\n" //
                         + "</pre>");
-        State<Reader, LatestWasRead> latestWasRead = m.createState("Latest Was Read") //
-                .event(LatestWasRead.class); 
+        State<Reader, Request> requestedNoneAvailable = m.createState("Requested None Available") //
+                .event(Request.class);
+        State<Reader, Written> moreAvailableNoRequests = m.createState("More Available, No Requests").event(Written.class);
+        State<Reader, Request> moreAvailableRequested = m.createState("More Available, Requested").event(Request.class);
+        State<Reader, Written> requestedMoreAvailable = m.createState("Requested, More Available").event(Written.class);
 
         created //
                 .initial() //
                 .to(hasSegment) //
                 .to(fileOpened) //
-                .to(reading) //
-                .to(metRequests);
+                .to(metRequests); //
         reading.to(closedFile);
-        reading.to(latestWasRead);
-
+        reading.to(requestedNoneAvailable);
+        reading.to(metRequests);
+        metRequests.to(requestedNoneAvailable);
+        reading.from(requestedNoneAvailable);
+        moreAvailableNoRequests.from(metRequests);
+        moreAvailableNoRequests.to(moreAvailableRequested);
+        requestedNoneAvailable.to(requestedMoreAvailable);
+        moreAvailableRequested.to(reading);
         return m;
     }
 
