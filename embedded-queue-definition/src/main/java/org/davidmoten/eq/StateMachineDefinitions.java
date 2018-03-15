@@ -63,7 +63,6 @@ public final class StateMachineDefinitions implements Supplier<List<StateMachine
                 .to(fileOpened) //
                 .to(metRequests); //
         reading.to(closedFile);
-        reading.to(requestedNoneAvailable);
         reading.to(metRequests);
         metRequests.to(requestedNoneAvailable);
         moreAvailableNoRequests.from(metRequests);
