@@ -55,7 +55,7 @@ public final class StateMachineDefinitions implements Supplier<List<StateMachine
         State<Reader, Written> moreAvailableNoRequests = m.createState("More Available, No Requests").event(Written.class);
         State<Reader, Request> moreAvailableRequested = m.createState("More Available, Requested").event(Request.class);
         State<Reader, Written> requestedMoreAvailable = m.createState("Requested, More Available").event(Written.class);
-        State<Reader, LatestWasRead> lastWasRead = m.createState("Last was read, Requested").event(LatestWasRead.class);
+        State<Reader, LatestWasRead> latestRead = m.createState("Latest read, Requested").event(LatestWasRead.class);
 
         created //
                 .initial() //
@@ -70,8 +70,8 @@ public final class StateMachineDefinitions implements Supplier<List<StateMachine
         requestedNoneAvailable.to(requestedMoreAvailable);
         moreAvailableRequested.to(reading);
         requestedMoreAvailable.to(reading);
-        lastWasRead.from(reading);
-        lastWasRead.to(requestedMoreAvailable);
+        latestRead.from(reading);
+        latestRead.to(requestedMoreAvailable);
         return m;
     }
 
