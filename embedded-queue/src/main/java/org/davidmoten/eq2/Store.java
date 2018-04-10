@@ -101,6 +101,7 @@ public class Store {
 
     private void processEventAddSegment(AddSegment event) {
         segments.add(event.segment);
+        writeState = WriteState.SEGMENT_NOT_FULL;
         // TODO notify readers?
     }
 
@@ -116,7 +117,6 @@ public class Store {
             long pos = writePosition;
             io.scheduleDirect(() -> {
                 Segment segment = createSegment(pos);
-                writeState = WriteState.SEGMENT_NOT_FULL;
                 queue.offer(new AddSegment(segment));
                 drain();
             });
