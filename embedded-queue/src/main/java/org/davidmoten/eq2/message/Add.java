@@ -1,16 +1,15 @@
 package org.davidmoten.eq2.message;
 
 import java.nio.ByteBuffer;
-
-import io.reactivex.functions.Action;
+import java.util.concurrent.CountDownLatch;
 
 public class Add implements Event {
     
-    final Iterable<ByteBuffer> byteBuffers;
-    final Action completionAction;
-    
-    public Add(Iterable<ByteBuffer> byteBuffers, Action completionAction) {
+    public final Iterable<ByteBuffer> byteBuffers;
+    public final CountDownLatch latch;
+
+    public Add(Iterable<ByteBuffer> byteBuffers) {
         this.byteBuffers = byteBuffers;
-        this.completionAction = completionAction;
+        this.latch = new CountDownLatch(1);
     }
 }

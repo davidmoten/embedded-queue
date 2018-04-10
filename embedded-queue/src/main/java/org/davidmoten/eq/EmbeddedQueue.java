@@ -17,6 +17,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.zip.CRC32;
 
+import org.davidmoten.eq2.IORuntimeException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
