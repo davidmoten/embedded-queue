@@ -31,6 +31,12 @@ public class Store {
     final File directory;
     final long addTimeoutMs = TimeUnit.SECONDS.toMillis(1);
 
+    private static enum WriteState {
+        SEGMENT_FULL, CREATING_SEGMENT, SEGMENT_NOT_FULL;
+    }
+
+    private WriteState writeState = WriteState.SEGMENT_FULL;
+
     public Store(File directory, int segmentSize) {
         this.directory = directory;
         this.segmentSize = segmentSize;
@@ -105,22 +111,27 @@ public class Store {
         // TODO notify readers?
     }
 
-    private static enum WriteState {
-        NO_SEGMENTS, SEGMENT_FULL, CREATING_SEGMENT, SEGMENT_NOT_FULL;
-    }
-
-    private WriteState writeState = WriteState.NO_SEGMENTS;
-
     private void processEventAdd(Add event) {
-        if (writeState == WriteState.NO_SEGMENTS) {
+        if (writeState == WriteState.SEGMENT_FULL) {
             writeState = WriteState.CREATING_SEGMENT;
             long pos = writePosition;
             io.scheduleDirect(() -> {
                 Segment segment = createSegment(pos);
                 queue.offer(new AddSegment(segment));
+                // retry with add event
+                queue.offer(event);
                 drain();
             });
+        } else if (writeState == WriteState.SEGMENT_NOT_FULL) {
+            writeMessageToSegment(event, segments.getLast());
         }
+    }
+
+    private void writeMessageToSegment(Add event, Segment segment) {
+        // calculate write position relative to segment start
+        long pos = writePosition - segment.start;
+        
+        
     }
 
     private Segment createSegment(long pos) {
