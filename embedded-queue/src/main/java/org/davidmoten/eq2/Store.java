@@ -1,6 +1,7 @@
 package org.davidmoten.eq2;
 
 import java.io.File;
+import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.RandomAccessFile;
 import java.nio.ByteBuffer;
@@ -82,9 +83,9 @@ public class Store {
 
     private void drain() {
         // this method is non-blocking
-        // so that any call to drain should 
-        // rocket through (albeit performing 
-        // volatile reads and writes). No IO 
+        // so that any call to drain should
+        // rocket through (albeit performing
+        // volatile reads and writes). No IO
         // should be done by this drain call (
         // scheduled IO work is ok),
         if (wip.getAndIncrement() == 0) {
@@ -174,16 +175,19 @@ public class Store {
         try {
             Preconditions.checkArgument(!file.exists());
             file.createNewFile();
-            RandomAccessFile f = new RandomAccessFile(file, "rw");
-            f.seek(segmentSize - 1);
-            f.write(0);
-            f.seek(0);
-            f.write(0);
-            f.close();
+            createFixedLengthFile(file, segmentSize);
         } catch (IOException e) {
             throw new IORuntimeException(e);
         }
         return file;
+    }
+
+    private static void createFixedLengthFile(File file, long segmentSize)
+            throws FileNotFoundException, IOException {
+        RandomAccessFile f = new RandomAccessFile(file, "rw");
+        f.seek(segmentSize - 1);
+        f.write(0);
+        f.close();
     }
 
     private static MessageDigest createDefaultMessageDigest() {
