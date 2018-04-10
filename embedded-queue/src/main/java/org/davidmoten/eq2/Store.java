@@ -17,6 +17,8 @@ import org.davidmoten.eq2.event.AddSegment;
 import org.davidmoten.eq2.event.Event;
 import org.davidmoten.eq2.event.Written;
 
+import com.github.davidmoten.guavamini.Preconditions;
+
 import io.reactivex.Scheduler;
 import io.reactivex.internal.fuseable.SimplePlainQueue;
 import io.reactivex.internal.queue.MpscLinkedQueue;
@@ -79,6 +81,12 @@ public class Store {
     private RandomAccessFile writeFile;
 
     private void drain() {
+        // this method is non-blocking
+        // so that any call to drain should 
+        // rocket through (albeit performing 
+        // volatile reads and writes). No IO 
+        // should be done by this drain call (
+        // scheduled IO work is ok),
         if (wip.getAndIncrement() == 0) {
             int missed = 1;
             while (true) {
@@ -164,11 +172,8 @@ public class Store {
     private File nextFile(long writePosition) {
         File file = new File(directory, writePosition + "");
         try {
+            Preconditions.checkArgument(!file.exists());
             file.createNewFile();
-            // write the complete file now
-            // if file already exists that's ok
-            // we will overwrite it by setting the
-            // first byte to zero
             RandomAccessFile f = new RandomAccessFile(file, "rw");
             f.seek(segmentSize - 1);
             f.write(0);
