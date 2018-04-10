@@ -12,8 +12,9 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
-import org.davidmoten.eq2.message.Add;
-import org.davidmoten.eq2.message.Event;
+import org.davidmoten.eq2.event.Add;
+import org.davidmoten.eq2.event.AddSegment;
+import org.davidmoten.eq2.event.Event;
 
 import io.reactivex.Scheduler;
 import io.reactivex.internal.fuseable.SimplePlainQueue;
@@ -91,9 +92,16 @@ public class Store {
     private void processEvent(Event event) {
         if (event instanceof Add) {
             processEventAdd((Add) event);
+        } else if (event instanceof AddSegment) {
+            processEventAddSegment((AddSegment) event);
         } else {
             throw new RuntimeException("processing not defined for this event: " + event);
         }
+    }
+
+    private void processEventAddSegment(AddSegment event) {
+        segments.add(event.segment);
+        // TODO notify readers?
     }
 
     private static enum WriteState {
@@ -105,17 +113,18 @@ public class Store {
     private void processEventAdd(Add event) {
         if (writeState == WriteState.NO_SEGMENTS) {
             writeState = WriteState.CREATING_SEGMENT;
+            long pos = writePosition;
             io.scheduleDirect(() -> {
-                createSegment();
+                Segment segment = createSegment(pos);
                 writeState = WriteState.SEGMENT_NOT_FULL;
+                queue.offer(new AddSegment(segment));
                 drain();
             });
         }
     }
 
-    private void createSegment() {
-        System.out.println("creating segment");
-        segments.add(new Segment(nextFile(writePosition), writePosition));
+    private Segment createSegment(long pos) {
+        return new Segment(nextFile(pos), pos);
     }
 
     private File nextFile(long writePosition) {

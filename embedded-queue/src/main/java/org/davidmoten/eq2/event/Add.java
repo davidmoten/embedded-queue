@@ -1,4 +1,4 @@
-package org.davidmoten.eq2.message;
+package org.davidmoten.eq2.event;
 
 import java.nio.ByteBuffer;
 import java.util.concurrent.CountDownLatch;
