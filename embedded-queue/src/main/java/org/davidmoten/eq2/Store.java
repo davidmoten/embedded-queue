@@ -15,6 +15,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import org.davidmoten.eq2.event.AddMessage;
 import org.davidmoten.eq2.event.AddSegment;
 import org.davidmoten.eq2.event.Event;
+import org.davidmoten.eq2.event.Written;
 
 import io.reactivex.Scheduler;
 import io.reactivex.internal.fuseable.SimplePlainQueue;
@@ -34,9 +35,6 @@ public class Store {
     private static enum WriteState {
         SEGMENT_FULL, CREATING_SEGMENT, SEGMENT_READY, WRITING;
     }
-
-    private static final Event WRITTEN = new Event() {
-    };
 
     private WriteState writeState = WriteState.SEGMENT_FULL;
 
@@ -104,15 +102,16 @@ public class Store {
             processEventAddMessage((AddMessage) event);
         } else if (event instanceof AddSegment) {
             processEventAddSegment((AddSegment) event);
-        } else if (event == WRITTEN) {
-            processEventWritten();
+        } else if (event instanceof Written) {
+            processEventWritten((Written) event);
         } else {
             throw new RuntimeException("processing not defined for this event: " + event);
         }
     }
 
-    private void processEventWritten() {
+    private void processEventWritten(Written event) {
         writeState = WriteState.SEGMENT_READY;
+        writePosition = event.writePosition;
     }
 
     private void processEventAddSegment(AddSegment event) {
@@ -136,7 +135,7 @@ public class Store {
             });
         } else if (writeState == WriteState.SEGMENT_READY) {
             writeToSegment(event, segments.getLast());
-        } 
+        }
         // should not be at WRITING state because is synchronous
     }
 
@@ -150,7 +149,7 @@ public class Store {
                 f.seek(pos);
                 f.write(0);
                 event.latch.countDown();
-                queue.offer(WRITTEN);
+                queue.offer(new Written(pos + 1));
             } catch (IOException e) {
                 throw new IORuntimeException(e);
             }
