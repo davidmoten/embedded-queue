@@ -6,8 +6,8 @@ import java.security.NoSuchAlgorithmException;
 import java.util.List;
 
 public class Segment {
-     final File file;
-     final long start;
+     public final File file;
+     public final long start;
 
      public Segment(File file, long start) {
         this.file = file;

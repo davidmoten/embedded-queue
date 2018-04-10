@@ -12,7 +12,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
-import org.davidmoten.eq2.event.Add;
+import org.davidmoten.eq2.event.AddMessage;
 import org.davidmoten.eq2.event.AddSegment;
 import org.davidmoten.eq2.event.Event;
 
@@ -32,8 +32,11 @@ public class Store {
     final long addTimeoutMs = TimeUnit.SECONDS.toMillis(1);
 
     private static enum WriteState {
-        SEGMENT_FULL, CREATING_SEGMENT, SEGMENT_NOT_FULL;
+        SEGMENT_FULL, CREATING_SEGMENT, SEGMENT_READY, WRITING;
     }
+
+    private static final Event WRITTEN = new Event() {
+    };
 
     private WriteState writeState = WriteState.SEGMENT_FULL;
 
@@ -62,7 +65,7 @@ public class Store {
     // is synchronous to ensure that client knows message has been persisted to the
     // queue
     public boolean add(Iterable<ByteBuffer> byteBuffers) {
-        Add add = new Add(byteBuffers);
+        AddMessage add = new AddMessage(byteBuffers);
         queue.offer(add);
         drain();
         try {
@@ -75,6 +78,7 @@ public class Store {
     private final AtomicInteger wip = new AtomicInteger();
 
     private final SimplePlainQueue<Event> queue = new MpscLinkedQueue<>();
+    private RandomAccessFile writeFile;
 
     private void drain() {
         if (wip.getAndIncrement() == 0) {
@@ -96,22 +100,30 @@ public class Store {
     }
 
     private void processEvent(Event event) {
-        if (event instanceof Add) {
-            processEventAdd((Add) event);
+        if (event instanceof AddMessage) {
+            processEventAddMessage((AddMessage) event);
         } else if (event instanceof AddSegment) {
             processEventAddSegment((AddSegment) event);
+        } else if (event == WRITTEN) {
+            processEventWritten();
         } else {
             throw new RuntimeException("processing not defined for this event: " + event);
         }
     }
 
+    private void processEventWritten() {
+        writeState = WriteState.SEGMENT_READY;
+    }
+
     private void processEventAddSegment(AddSegment event) {
         segments.add(event.segment);
-        writeState = WriteState.SEGMENT_NOT_FULL;
+        writeState = WriteState.SEGMENT_READY;
+        writeSegment = event.segment;
+        writeFile = event.file;
         // TODO notify readers?
     }
 
-    private void processEventAdd(Add event) {
+    private void processEventAddMessage(AddMessage event) {
         if (writeState == WriteState.SEGMENT_FULL) {
             writeState = WriteState.CREATING_SEGMENT;
             long pos = writePosition;
@@ -122,16 +134,28 @@ public class Store {
                 queue.offer(event);
                 drain();
             });
-        } else if (writeState == WriteState.SEGMENT_NOT_FULL) {
-            writeMessageToSegment(event, segments.getLast());
-        }
+        } else if (writeState == WriteState.SEGMENT_READY) {
+            writeToSegment(event, segments.getLast());
+        } 
+        // should not be at WRITING state because is synchronous
     }
 
-    private void writeMessageToSegment(Add event, Segment segment) {
+    private void writeToSegment(AddMessage event, Segment segment) {
         // calculate write position relative to segment start
         long pos = writePosition - segment.start;
-        
-        
+        writeState = WriteState.WRITING;
+        io.scheduleDirect(() -> {
+            try {
+                RandomAccessFile f = writeFile;
+                f.seek(pos);
+                f.write(0);
+                event.latch.countDown();
+                queue.offer(WRITTEN);
+            } catch (IOException e) {
+                throw new IORuntimeException(e);
+            }
+            drain();
+        });
     }
 
     private Segment createSegment(long pos) {
