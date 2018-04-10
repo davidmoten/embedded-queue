@@ -23,12 +23,17 @@ import io.reactivex.schedulers.Schedulers;
 public class Store {
 
     final LinkedList<Segment> segments = new LinkedList<>();
-    final int segmentSize = 10 * 1024 * 1024;
+    final int segmentSize;
     final int chunkSize = 1024 * 1024;
     final MessageDigest digest = createDefaultMessageDigest();
     final Scheduler io = Schedulers.from(Executors.newFixedThreadPool(10));
-    final File directory = new File("target");
-    final long addTimeoutMs = TimeUnit.SECONDS.toMillis(5);
+    final File directory;
+    final long addTimeoutMs = TimeUnit.SECONDS.toMillis(1);
+
+    public Store(File directory, int segmentSize) {
+        this.directory = directory;
+        this.segmentSize = segmentSize;
+    }
 
     Segment writeSegment;
     long writePosition;
