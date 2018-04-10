@@ -37,10 +37,6 @@ public class Store {
         return add(Collections.singletonList(ByteBuffer.wrap(bytes)));
     }
 
-    // Iterable is a reasonable choice (as opposed to Flowable) because this method
-    // is synchronous to ensure that client knows message has been persisted to the
-    // queue
-
     /**
      * Returns true if message has been persisted to queue. Returns false due to a
      * timeout in which case a retry may be advisable.
@@ -50,9 +46,13 @@ public class Store {
      * @return true if message has been persisted to queue. Returns false due to a
      *         timeout in which case a retry may be advisable
      */
+    // Iterable is a reasonable choice (as opposed to Flowable) because this method
+    // is synchronous to ensure that client knows message has been persisted to the
+    // queue
     public boolean add(Iterable<ByteBuffer> byteBuffers) {
         Add add = new Add(byteBuffers);
         queue.offer(add);
+        drain();
         try {
             return add.latch.await(addTimeoutMs, TimeUnit.MILLISECONDS);
         } catch (InterruptedException e) {
@@ -65,7 +65,7 @@ public class Store {
     private final SimplePlainQueue<Event> queue = new MpscLinkedQueue<>();
 
     private void drain() {
-        if (wip.getAndIncrement() != 0) {
+        if (wip.getAndIncrement() == 0) {
             int missed = 1;
             while (true) {
                 Event m = queue.poll();
@@ -95,18 +95,21 @@ public class Store {
         NO_SEGMENTS, SEGMENT_FULL, CREATING_SEGMENT, SEGMENT_NOT_FULL;
     }
 
-    private WriteState writeState = WriteState.SEGMENT_FULL;
+    private WriteState writeState = WriteState.NO_SEGMENTS;
 
     private void processEventAdd(Add event) {
         if (writeState == WriteState.NO_SEGMENTS) {
             writeState = WriteState.CREATING_SEGMENT;
             io.scheduleDirect(() -> {
                 createSegment();
+                writeState = WriteState.SEGMENT_NOT_FULL;
+                drain();
             });
         }
     }
 
     private void createSegment() {
+        System.out.println("creating segment");
         segments.add(new Segment(nextFile(writePosition), writePosition));
     }
 
