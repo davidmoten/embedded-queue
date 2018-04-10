@@ -7,15 +7,15 @@ import java.io.RandomAccessFile;
 import java.nio.ByteBuffer;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
-import java.util.Collections;
 import java.util.LinkedList;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
-import org.davidmoten.eq2.event.AddMessage;
 import org.davidmoten.eq2.event.AddSegment;
+import org.davidmoten.eq2.event.EndMessage;
 import org.davidmoten.eq2.event.Event;
+import org.davidmoten.eq2.event.MesagePart;
 import org.davidmoten.eq2.event.Written;
 
 import com.github.davidmoten.guavamini.Preconditions;
@@ -30,7 +30,6 @@ public class Store {
     final LinkedList<Segment> segments = new LinkedList<>();
     final int segmentSize;
     final int chunkSize = 1024 * 1024;
-    final MessageDigest digest = createDefaultMessageDigest();
     final Scheduler io = Schedulers.from(Executors.newFixedThreadPool(10));
     final File directory;
     final long addTimeoutMs = TimeUnit.SECONDS.toMillis(1);
@@ -50,27 +49,30 @@ public class Store {
     long writePosition;
 
     public boolean add(byte[] bytes) {
-        return add(Collections.singletonList(ByteBuffer.wrap(bytes)));
+        return add(ByteBuffer.wrap(bytes));
     }
 
-    /**
-     * Returns true if message has been persisted to queue. Returns false due to a
-     * timeout in which case a retry may be advisable.
-     * 
-     * @param byteBuffers
-     *            message bytes
-     * @return true if message has been persisted to queue. Returns false due to a
-     *         timeout in which case a retry may be advisable
-     */
-    // Iterable is a reasonable choice (as opposed to Flowable) because this method
-    // is synchronous to ensure that client knows message has been persisted to the
-    // queue
-    public boolean add(Iterable<ByteBuffer> byteBuffers) {
-        AddMessage add = new AddMessage(byteBuffers);
+    public boolean add(ByteBuffer bb) {
+        addPart(bb);
+        return endMessage();
+    }
+
+    public void addPart(byte[] bytes) {
+        addPart(ByteBuffer.wrap(bytes));
+    }
+
+    public void addPart(ByteBuffer bb) {
+        MesagePart add = new MesagePart(bb);
         queue.offer(add);
         drain();
+    }
+
+    public boolean endMessage() {
+        EndMessage m = new EndMessage();
+        queue.offer(m);
+        drain();
         try {
-            return add.latch.await(addTimeoutMs, TimeUnit.MILLISECONDS);
+            return m.latch.await(addTimeoutMs, TimeUnit.MILLISECONDS);
         } catch (InterruptedException e) {
             throw new RuntimeException(e);
         }
@@ -80,6 +82,8 @@ public class Store {
 
     private final SimplePlainQueue<Event> queue = new MpscLinkedQueue<>();
     private RandomAccessFile writeFile;
+    private long writePositionPart;
+    private boolean isFirstPart = true;
 
     private void drain() {
         // this method is non-blocking
@@ -107,12 +111,14 @@ public class Store {
     }
 
     private void processEvent(Event event) {
-        if (event instanceof AddMessage) {
-            processEventAddMessage((AddMessage) event);
+        if (event instanceof MesagePart) {
+            processEventMessagePart((MesagePart) event);
         } else if (event instanceof AddSegment) {
             processEventAddSegment((AddSegment) event);
         } else if (event instanceof Written) {
             processEventWritten((Written) event);
+        } else if (event instanceof EndMessage) {
+            processEventEndMessage((EndMessage) event);
         } else {
             throw new RuntimeException("processing not defined for this event: " + event);
         }
@@ -131,7 +137,7 @@ public class Store {
         // TODO notify readers?
     }
 
-    private void processEventAddMessage(AddMessage event) {
+    private void processEventMessagePart(MesagePart event) {
         if (writeState == WriteState.SEGMENT_FULL) {
             writeState = WriteState.CREATING_SEGMENT;
             long pos = writePosition;
@@ -148,22 +154,43 @@ public class Store {
         // should not be at WRITING state because is synchronous
     }
 
-    private void writeToSegment(AddMessage event, Segment segment) {
+    private void processEventEndMessage(EndMessage event) {
+        // TODO Auto-generated method stub
+    }
+
+    private final MessageDigest writeDigest = createDefaultMessageDigest();
+
+    private static final int LENGTH_BYTES = 4;
+    private final int minMessageSize = LENGTH_BYTES + writeDigest.getDigestLength() + 4;
+
+    private void writeToSegment(MesagePart event, Segment segment) {
         // calculate write position relative to segment start
         long pos = writePosition - segment.start;
-        writeState = WriteState.WRITING;
-        io.scheduleDirect(() -> {
-            try {
-                RandomAccessFile f = writeFile;
-                f.seek(pos);
-                f.write(0);
-                event.latch.countDown();
-                queue.offer(new Written(pos + 1));
-            } catch (IOException e) {
-                throw new IORuntimeException(e);
-            }
-            drain();
-        });
+        if (pos >= segmentSize - minMessageSize) {
+            writeState = WriteState.SEGMENT_FULL;
+            queue.offer(event);
+        } else {
+            writePositionPart = writePosition;
+            boolean firstPart = this.isFirstPart;
+            this.isFirstPart = false;
+            writeState = WriteState.WRITING;
+            io.scheduleDirect(() -> {
+                try {
+                    RandomAccessFile f = writeFile;
+                    f.seek(pos);
+                    if (firstPart) {
+                        // set length to zero until last part written
+                        f.writeInt(0);
+                    }
+                    f.write(event.bb.array(), event.bb.position(), event.bb.limit());
+                    writeDigest.update(event.bb);
+                    queue.offer(new Written(pos + 1));
+                } catch (IOException e) {
+                    throw new IORuntimeException(e);
+                }
+                drain();
+            });
+        }
     }
 
     private Segment createSegment(long pos) {
