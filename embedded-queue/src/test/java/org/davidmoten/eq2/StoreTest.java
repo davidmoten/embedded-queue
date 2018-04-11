@@ -8,6 +8,7 @@ import java.io.File;
 import java.io.IOException;
 import java.io.RandomAccessFile;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -21,13 +22,20 @@ public class StoreTest {
     public void test() throws IOException {
         File directory = new File("target/" + System.currentTimeMillis());
         directory.mkdirs();
-        int segmentSize = 1024 * 1024;
+        int segmentSize = 30;
         Store store = new Store(directory, segmentSize);
         boolean added = store.add(MSG);
         File segment = new File(directory, "0");
         assertTrue(segment.exists());
         assertEquals(segmentSize, segment.length());
         assertTrue(added);
+        byte[] bytes = Files.readAllBytes(store.segments.get(0).file.toPath());
+        for (byte b:bytes) {
+            System.out.println("original "+ b);
+        }
+        for (byte b:bytes) {
+            System.out.println(b);
+        }
         messages(store).stream().forEach(x -> System.out.println(new String(x)));
     }
 
@@ -50,9 +58,10 @@ public class StoreTest {
             }
             if (bytesToRead == 0) {
                 if (bytes != null) {
-                    System.out.println("adding "+ new String(bytes.toByteArray()));
+                    System.out.println("adding " + new String(bytes.toByteArray()));
                     list.add(bytes.toByteArray());
                     bytes.reset();
+
                 } else {
                     bytes = new ByteArrayOutputStream();
                 }

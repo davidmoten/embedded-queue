@@ -33,7 +33,7 @@ public class Store {
     final int chunkSize = 1024 * 1024;
     final Scheduler io = Schedulers.from(Executors.newFixedThreadPool(10));
     final File directory;
-    final long addTimeoutMs = TimeUnit.SECONDS.toMillis(1);
+    final long addTimeoutMs = TimeUnit.SECONDS.toMillis(1000);
 
     private final AtomicInteger wip = new AtomicInteger();
 
@@ -156,13 +156,19 @@ public class Store {
     }
 
     private void processEventEndWritten(EndWritten event) {
-        writePosition = event.writePosition;
+        writeState = WriteState.SEGMENT_READY;
+        setWritePosition(event.writePosition);
         isFirstPart = true;
+    }
+    
+    private void setWritePosition(long p) {
+        System.out.println("setting writePosition to "+ p);
+        writePosition = p;
     }
 
     private void processEventWritten(Written event) {
         writeState = WriteState.SEGMENT_READY;
-        writePosition = event.writePosition;
+        setWritePosition(event.writePosition);
     }
 
     private void createSegment(Event event) {
@@ -194,9 +200,10 @@ public class Store {
             queue.offer(event);
         } else {
             boolean firstPart = this.isFirstPart;
-            this.isFirstPart = false;
             if (firstPart) {
+                this.isFirstPart = false;
                 messageStartPosition = writePosition;
+                System.out.println("messageStartPosition=" + messageStartPosition);
             }
             writeState = WriteState.WRITING;
             io.scheduleDirect(() -> {
@@ -211,9 +218,12 @@ public class Store {
                     } else {
                         headerBytes = 0;
                     }
-                    f.write(event.bb.array(), event.bb.position(), event.bb.limit());
+                    f.write(event.bb.array(), event.bb.position(), event.bb.remaining());
                     writeDigest.update(event.bb);
-                    queue.offer(new Written(pos + event.bb.remaining() + headerBytes));
+                    System.out.println("bb.size = "+ event.bb.remaining());
+                    long nextWritePosition = segment.start + pos + event.bb.remaining() + headerBytes;
+                    System.out.println("nextWritePosition = "+ nextWritePosition);
+                    queue.offer(new Written(nextWritePosition));
                     event.latch.countDown();
                 } catch (IOException e) {
                     throw new IORuntimeException(e);
@@ -225,16 +235,23 @@ public class Store {
 
     private void writeEndMessage(EndMessage event, Segment segment) {
         long pos = writePosition - segment.start;
+        System.out.println("end pos=" + pos + ", wp="+ writePosition + "mstartpos="+ messageStartPosition);
         if (pos >= segmentSize - minMessageSize) {
             writeState = WriteState.SEGMENT_FULL;
+            try {
+                writeFile.close();
+            } catch (IOException e) {
+                throw new IORuntimeException(e);
+            }
             queue.offer(event);
         } else {
             boolean firstPart = this.isFirstPart;
-            this.isFirstPart = false;
             if (firstPart) {
+                this.isFirstPart = false;
                 messageStartPosition = writePosition;
             }
             long messageStartPos = messageStartPosition;
+            writeState = WriteState.WRITING;
             io.scheduleDirect(() -> {
                 try {
                     RandomAccessFile f = writeFile;
@@ -252,8 +269,8 @@ public class Store {
                     f.seek(messageStartPos);
                     int length = (int) (pos - messageStartPos - LENGTH_BYTES);
                     f.writeInt(length);
-                    event.latch.countDown();
                     queue.offer(new EndWritten(pos + checksum.length + headerBytes));
+                    event.latch.countDown();
                 } catch (IOException e) {
                     throw new IORuntimeException(e);
                 }
