@@ -160,9 +160,9 @@ public class Store {
         setWritePosition(event.writePosition);
         isFirstPart = true;
     }
-    
+
     private void setWritePosition(long p) {
-        System.out.println("setting writePosition to "+ p);
+        System.out.println("setting writePosition to " + p);
         writePosition = p;
     }
 
@@ -218,11 +218,13 @@ public class Store {
                     } else {
                         headerBytes = 0;
                     }
-                    f.write(event.bb.array(), event.bb.position(), event.bb.remaining());
+                    int bbLength = event.bb.remaining();
+                    f.write(event.bb.array(), event.bb.arrayOffset() + event.bb.position(),
+                            event.bb.remaining());
+                    // watch out because update(ByteBuffer) changes position
                     writeDigest.update(event.bb);
-                    System.out.println("bb.size = "+ event.bb.remaining());
-                    long nextWritePosition = segment.start + pos + event.bb.remaining() + headerBytes;
-                    System.out.println("nextWritePosition = "+ nextWritePosition);
+                    long nextWritePosition = segment.start + pos + bbLength + headerBytes;
+                    System.out.println("nextWritePosition = " + nextWritePosition);
                     queue.offer(new Written(nextWritePosition));
                     event.latch.countDown();
                 } catch (IOException e) {
@@ -235,7 +237,8 @@ public class Store {
 
     private void writeEndMessage(EndMessage event, Segment segment) {
         long pos = writePosition - segment.start;
-        System.out.println("end pos=" + pos + ", wp="+ writePosition + "mstartpos="+ messageStartPosition);
+        System.out.println(
+                "end pos=" + pos + ", wp=" + writePosition + ", mstartpos=" + messageStartPosition);
         if (pos >= segmentSize - minMessageSize) {
             writeState = WriteState.SEGMENT_FULL;
             try {
@@ -267,6 +270,7 @@ public class Store {
                     byte[] checksum = writeDigest.digest();
                     f.write(checksum);
                     f.seek(messageStartPos);
+                    System.out.println("Pos=" + pos);
                     int length = (int) (pos - messageStartPos - LENGTH_BYTES);
                     f.writeInt(length);
                     queue.offer(new EndWritten(pos + checksum.length + headerBytes));
