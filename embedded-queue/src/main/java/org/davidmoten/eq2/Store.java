@@ -39,9 +39,8 @@ public class Store {
 
     private final SimplePlainQueue<Event> queue = new MpscLinkedQueue<>();
     private RandomAccessFile writeFile;
-    private long writePositionPart;
+    private RandomAccessFile writeFileStart;
     private boolean isFirstPart = true;
-    private Segment writeSegment;
     private long writePosition;
     private final MessageDigest writeDigest = createDefaultMessageDigest();
     private static final int LENGTH_BYTES = 4;
@@ -141,7 +140,6 @@ public class Store {
     private void processEventAddSegment(AddSegment event) {
         segments.add(event.segment);
         writeState = WriteState.SEGMENT_READY;
-        writeSegment = event.segment;
         writeFile = event.file;
         // TODO notify readers?
     }
@@ -203,6 +201,7 @@ public class Store {
             if (firstPart) {
                 this.isFirstPart = false;
                 messageStartPosition = writePosition;
+                writeFileStart = writeFile;
                 System.out.println("messageStartPosition=" + messageStartPosition);
             }
             writeState = WriteState.WRITING;
@@ -263,16 +262,22 @@ public class Store {
                     if (firstPart) {
                         // set length to zero until last part written
                         f.writeInt(0);
+                        writeFileStart = writeFile;
                         headerBytes = 4;
                     } else {
                         headerBytes = 0;
                     }
                     byte[] checksum = writeDigest.digest();
                     f.write(checksum);
-                    f.seek(messageStartPos);
+                    // TODO write length 0 after checksum?
+                    writeFileStart.seek(messageStartPos);
                     System.out.println("Pos=" + pos);
                     int length = (int) (pos - messageStartPos - LENGTH_BYTES);
-                    f.writeInt(length);
+                    writeFileStart.writeInt(length);
+                    if (writeFileStart!= writeFile) {
+                        writeFileStart.close();
+                        writeFileStart = null;
+                    }
                     queue.offer(new EndWritten(pos + checksum.length + headerBytes));
                     event.latch.countDown();
                 } catch (IOException e) {

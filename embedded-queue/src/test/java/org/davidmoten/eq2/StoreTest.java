@@ -21,10 +21,20 @@ public class StoreTest {
     private static final byte[] MSG = "hello".getBytes(StandardCharsets.UTF_8);
 
     @Test
-    public void test() throws IOException {
+    public void testOneMessageInOneSegment() throws IOException {
+        int segmentSize = 50;
+        testWriteOneMessage(segmentSize);
+    }
+    
+    @Test(timeout=2000)
+    public void testOneMessageAcrossTwoSegments() throws IOException {
+        int segmentSize = 30;
+        testWriteOneMessage(segmentSize);
+    }
+
+    private static void testWriteOneMessage(int segmentSize) throws IOException {
         File directory = new File("target/" + System.currentTimeMillis());
         directory.mkdirs();
-        int segmentSize = 50;
         Store store = new Store(directory, segmentSize);
         boolean added = store.add(MSG);
         File segment = new File(directory, "0");
