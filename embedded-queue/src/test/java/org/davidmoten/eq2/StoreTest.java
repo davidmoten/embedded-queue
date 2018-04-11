@@ -22,7 +22,7 @@ public class StoreTest {
         File segment = new File(directory, "0");
         assertTrue(segment.exists());
         assertEquals(segmentSize, segment.length());
-        // assertTrue(added);
+        assertTrue(added);
     }
 
 }
