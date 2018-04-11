@@ -28,7 +28,7 @@ public class StoreTest {
         assertTrue(segment.exists());
         assertEquals(segmentSize, segment.length());
         assertTrue(added);
-        messages(store).stream().forEach(x -> System.out.println(new String(x)));;
+        messages(store).stream().forEach(x -> System.out.println(new String(x)));
     }
 
     private static List<byte[]> messages(Store store) throws IOException {
@@ -39,7 +39,7 @@ public class StoreTest {
         ByteArrayOutputStream bytes = null;
         int bytesToRead = 0;
         while (true) {
-            if (file == null ||position >= file.length()) {
+            if (file == null || position >= file.length()) {
                 i += 1;
                 if (i >= store.segments.size()) {
                     break;
@@ -50,12 +50,16 @@ public class StoreTest {
             }
             if (bytesToRead == 0) {
                 if (bytes != null) {
+                    System.out.println("adding "+ new String(bytes.toByteArray()));
                     list.add(bytes.toByteArray());
                     bytes.reset();
                 } else {
                     bytes = new ByteArrayOutputStream();
                 }
                 bytesToRead = file.readInt();
+                if (bytesToRead == 0) {
+                    break;
+                }
             }
             int remaining = (int) (file.length() - 4 - position);
             int n = Math.min(remaining, bytesToRead);
