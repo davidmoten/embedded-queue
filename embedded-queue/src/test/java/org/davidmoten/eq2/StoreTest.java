@@ -26,7 +26,7 @@ public class StoreTest {
         testWriteOneMessage(segmentSize);
     }
     
-    @Test(timeout=2000)
+    @Test(timeout=20000000)
     public void testOneMessageAcrossTwoSegments() throws IOException {
         int segmentSize = 30;
         testWriteOneMessage(segmentSize);
@@ -41,7 +41,18 @@ public class StoreTest {
         assertTrue(segment.exists());
         assertEquals(segmentSize, segment.length());
         assertTrue(added);
-        // byte[] bytes = Files.readAllBytes(store.segments.get(0).file.toPath());
+        store.segments.stream().forEach(x -> {
+            try {
+//                System.out.println(x.start + ":");
+                byte[] bytes = Files.readAllBytes(store.segments.get(0).file.toPath());
+                for (byte b:bytes) {
+//                    System.out.println(b);
+                }
+            } catch (IOException e) {
+                throw new IORuntimeException(e);
+            } 
+        });
+        // 
         List<String> msgs = messages(store) //
                 .stream() //
                 .map(x -> new String(x, StandardCharsets.UTF_8)) //
@@ -71,7 +82,6 @@ public class StoreTest {
                     System.out.println("adding " + new String(bytes.toByteArray()));
                     list.add(bytes.toByteArray());
                     bytes.reset();
-
                 } else {
                     bytes = new ByteArrayOutputStream();
                 }
@@ -79,15 +89,16 @@ public class StoreTest {
                 if (bytesToRead == 0) {
                     break;
                 }
-            }
-            int remaining = (int) (file.length() - 4 - position);
+                position+=4;
+            } 
+            int remaining = (int) (file.length() - position);
             int n = Math.min(remaining, bytesToRead);
             byte[] b = new byte[n];
             int numRead = file.read(b);
             assert numRead == n;
             bytes.write(b);
             bytesToRead -= n;
-            position += 4 + n;
+            position += n;
         }
         return list;
     }

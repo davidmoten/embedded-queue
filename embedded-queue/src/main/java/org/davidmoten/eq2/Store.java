@@ -40,6 +40,7 @@ public class Store {
     private final SimplePlainQueue<Event> queue = new MpscLinkedQueue<>();
     private RandomAccessFile writeFile;
     private RandomAccessFile writeFileStart;
+    private Segment writeSegmentStart;
     private boolean isFirstPart = true;
     private long writePosition;
     private final MessageDigest writeDigest = createDefaultMessageDigest();
@@ -194,6 +195,16 @@ public class Store {
         // calculate write position relative to segment start
         long pos = writePosition - segment.start;
         if (pos >= segmentSize - minMessageSize) {
+            if (pos < segmentSize) {
+                // terminate file so read won't be attempted past that point (will move to next
+                // segment)
+                try {
+                    writeFile.seek(pos);
+                    writeFile.writeInt(-1);
+                } catch (IOException e) {
+                    throw new IORuntimeException(e);
+                }
+            }
             writeState = WriteState.SEGMENT_FULL;
             queue.offer(event);
         } else {
@@ -202,6 +213,7 @@ public class Store {
                 this.isFirstPart = false;
                 messageStartPosition = writePosition;
                 writeFileStart = writeFile;
+                writeSegmentStart = segment;
                 System.out.println("messageStartPosition=" + messageStartPosition);
             }
             writeState = WriteState.WRITING;
@@ -239,9 +251,21 @@ public class Store {
         System.out.println(
                 "end pos=" + pos + ", wp=" + writePosition + ", mstartpos=" + messageStartPosition);
         if (pos >= segmentSize - minMessageSize) {
+            if (pos < segmentSize) {
+                // terminate file so read won't be attempted past that point (will move to next
+                // segment)
+                try {
+                    writeFile.seek(pos);
+                    writeFile.writeInt(-1);
+                } catch (IOException e) {
+                    throw new IORuntimeException(e);
+                }
+            }
             writeState = WriteState.SEGMENT_FULL;
             try {
-                writeFile.close();
+                if (writeFile != writeFileStart) {
+                    writeFile.close();
+                }
             } catch (IOException e) {
                 throw new IORuntimeException(e);
             }
@@ -263,6 +287,7 @@ public class Store {
                         // set length to zero until last part written
                         f.writeInt(0);
                         writeFileStart = writeFile;
+                        writeSegmentStart = segment;
                         headerBytes = 4;
                     } else {
                         headerBytes = 0;
@@ -270,17 +295,19 @@ public class Store {
                     byte[] checksum = writeDigest.digest();
                     f.write(checksum);
                     // TODO write length 0 after checksum?
-                    writeFileStart.seek(messageStartPos);
+                    writeFileStart.seek(messageStartPos - writeSegmentStart.start);
                     System.out.println("Pos=" + pos);
                     int length = (int) (pos - messageStartPos - LENGTH_BYTES);
                     writeFileStart.writeInt(length);
-                    if (writeFileStart!= writeFile) {
+                    if (writeFileStart != writeFile) {
                         writeFileStart.close();
                         writeFileStart = null;
+                        writeSegmentStart = null;
                     }
                     queue.offer(new EndWritten(pos + checksum.length + headerBytes));
                     event.latch.countDown();
                 } catch (IOException e) {
+                    e.printStackTrace();
                     throw new IORuntimeException(e);
                 }
                 drain();
