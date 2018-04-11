@@ -31,8 +31,11 @@ public class StoreTest {
         assertTrue(segment.exists());
         assertEquals(segmentSize, segment.length());
         assertTrue(added);
-//        byte[] bytes = Files.readAllBytes(store.segments.get(0).file.toPath());
-        List<String> msgs = messages(store).stream().map(x -> new String(x, StandardCharsets.UTF_8)).collect(Collectors.toList());
+        // byte[] bytes = Files.readAllBytes(store.segments.get(0).file.toPath());
+        List<String> msgs = messages(store) //
+                .stream() //
+                .map(x -> new String(x, StandardCharsets.UTF_8)) //
+                .collect(Collectors.toList());
         assertEquals(Collections.singletonList("hello"), msgs);
     }
 
