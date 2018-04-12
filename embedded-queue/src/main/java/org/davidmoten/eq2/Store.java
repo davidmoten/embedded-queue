@@ -27,7 +27,6 @@ import io.reactivex.Completable;
 import io.reactivex.CompletableObserver;
 import io.reactivex.Flowable;
 import io.reactivex.Scheduler;
-import io.reactivex.Single;
 import io.reactivex.disposables.Disposable;
 import io.reactivex.internal.fuseable.SimplePlainQueue;
 import io.reactivex.internal.queue.MpscLinkedQueue;
@@ -89,10 +88,12 @@ public class Store extends Completable implements Subscription {
             @Override
             public void onSubscribe(Subscription s) {
                 sourceSubscription = s;
+                s.request(1);
             }
 
             @Override
             public void onNext(Part part) {
+                System.out.println("part=" + part);
                 queue.offer(part);
                 drain();
             }
@@ -104,11 +105,12 @@ public class Store extends Completable implements Subscription {
 
             @Override
             public void onComplete() {
-                child.onComplete();
+                System.out.println("source complete");
+                queue.offer(new EndMessage());
+                drain();
             }
         };
         this.child = child;
-        source.subscribe(subscriber);
         child.onSubscribe(new Disposable() {
 
             volatile boolean disposed;
@@ -123,6 +125,8 @@ public class Store extends Completable implements Subscription {
                 disposed = true;
             }
         });
+        source.subscribe(subscriber);
+
     }
 
     @Override
@@ -145,16 +149,20 @@ public class Store extends Completable implements Subscription {
         if (wip.getAndIncrement() == 0) {
             int missed = 1;
             while (true) {
-                Event m = queue.poll();
-                if (m != null) {
-                    processEvent(m);
-                } else {
-                    break;
+                while (true) {
+                    Event m = queue.poll();
+                    if (m != null) {
+                        processEvent(m);
+                    } else {
+                        break;
+                    }
                 }
-            }
-            missed = wip.addAndGet(-missed);
-            if (missed == 0) {
-                return;
+                missed = wip.addAndGet(-missed);
+                System.out.println("missed=" + missed);
+                if (missed == 0) {
+                    System.out.println("finished drain");
+                    return;
+                }
             }
         }
     }
@@ -275,10 +283,9 @@ public class Store extends Completable implements Subscription {
                     long nextWritePosition = segment.start + pos + bbLength + headerBytes;
                     System.out.println("nextWritePosition = " + nextWritePosition);
                     queue.offer(new Written(nextWritePosition));
+                    requestOneMore();
                 } catch (Throwable e) {
                     emitError(e);
-                } finally {
-                    requestOneMore();
                 }
                 drain();
             });
@@ -296,7 +303,7 @@ public class Store extends Completable implements Subscription {
     private void emitComplete() {
         child.onComplete();
     }
-    
+
     private void writeEndMessage(EndMessage event, Segment segment) {
         long pos = writePosition - segment.start;
         System.out.println(
@@ -361,7 +368,7 @@ public class Store extends Completable implements Subscription {
                     emitComplete();
                 } catch (Throwable e) {
                     emitError(e);
-                } 
+                }
                 drain();
             });
         }
