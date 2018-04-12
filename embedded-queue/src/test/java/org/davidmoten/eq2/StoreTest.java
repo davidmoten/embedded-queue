@@ -12,6 +12,7 @@ import java.nio.file.Files;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
@@ -25,6 +26,7 @@ import io.reactivex.schedulers.Schedulers;
 public class StoreTest {
 
     private static final byte[] MSG = "hello".getBytes(StandardCharsets.UTF_8);
+    private static final byte[] MSG2 = "world".getBytes(StandardCharsets.UTF_8);
 
     private static int counter = 1;
 
@@ -34,10 +36,21 @@ public class StoreTest {
         testWriteOneMessage(segmentSize);
     }
 
-    @Test(timeout = 20000000)
+    @Test
     public void testOneMessageAcrossMultipleSegments() throws Exception {
         int segmentSize = 30;
         testWriteOneMessage(segmentSize);
+    }
+
+    @Test
+    public void testTwoMessagesInOneSegment() throws Exception {
+        int segmentSize = 1000;
+        File directory = new File("target/" + System.currentTimeMillis() + "_" + (counter++));
+        directory.mkdirs();
+        Store store = new Store(directory, segmentSize, Schedulers.trampoline());
+        Completable added = store.add(MSG).andThen(store.add(MSG2));
+        added.test().assertComplete();
+        assertEquals(Arrays.asList("hello", "world"), msgs(store));
     }
 
     private static void testWriteOneMessage(int segmentSize)
@@ -65,11 +78,14 @@ public class StoreTest {
             }
         });
         //
-        List<String> msgs = messages(store) //
+        assertEquals(Collections.singletonList("hello"), msgs(store));
+    }
+
+    private static List<String> msgs(Store store) throws NoSuchAlgorithmException, IOException {
+        return messages(store) //
                 .stream() //
                 .map(x -> new String(x, StandardCharsets.UTF_8)) //
                 .collect(Collectors.toList());
-        assertEquals(Collections.singletonList("hello"), msgs);
     }
 
     private static List<byte[]> messages(Store store) throws IOException, NoSuchAlgorithmException {

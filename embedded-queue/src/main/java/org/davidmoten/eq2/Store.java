@@ -80,7 +80,7 @@ public class Store extends Completable implements Subscription {
         this.source = byteBuffers.map(x -> new MessagePart(x));
         return this;
     }
-
+    
     @Override
     protected void subscribeActual(CompletableObserver child) {
         subscriber = new Subscriber<Part>() {
