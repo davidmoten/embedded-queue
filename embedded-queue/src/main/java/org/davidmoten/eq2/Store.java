@@ -80,7 +80,7 @@ public class Store extends Completable implements Subscription {
         this.source = byteBuffers.map(x -> new MessagePart(x));
         return this;
     }
-    
+
     @Override
     protected void subscribeActual(CompletableObserver child) {
         subscriber = new Subscriber<Part>() {
@@ -202,6 +202,8 @@ public class Store extends Completable implements Subscription {
         writeState = WriteState.SEGMENT_READY;
         setWritePosition(event.writePosition);
         isFirstPart = true;
+        writeFileStart = null;
+        writeSegmentStart = null;
     }
 
     private void setWritePosition(long p) {
@@ -274,6 +276,8 @@ public class Store extends Completable implements Subscription {
                         headerBytes = 0;
                     }
                     int bbLength = event.bb.remaining();
+                    System.out.println("writing '"+ new String(event.bb.array(), event.bb.arrayOffset() + event.bb.position(),
+                            event.bb.remaining()) + "'");
                     f.write(event.bb.array(), event.bb.arrayOffset() + event.bb.position(),
                             event.bb.remaining());
                     // watch out because update(ByteBuffer) changes position
@@ -354,15 +358,16 @@ public class Store extends Completable implements Subscription {
                     writeFileStart.seek(messageStartPos - writeSegmentStart.start);
                     System.out.println("Pos=" + pos);
                     final int length = (int) (pos + segment.start - messageStartPos - LENGTH_BYTES);
-                    System.out.println("writing length=" + length);
+                    System.out.println("writing length=" + length + " at " + writeFileStart.getFilePointer());
                     writeFileStart.writeInt(length);
                     if (writeFileStart != writeFile) {
                         writeFileStart.close();
                         writeFileStart = null;
                         writeSegmentStart = null;
                     }
-                    queue.offer(
-                            new EndWritten(pos + segment.start + checksum.length + headerBytes));
+                    long nextWritePosition = pos + segment.start + checksum.length + headerBytes;
+                    System.out.println("nextWritePosition=" + nextWritePosition);
+                    queue.offer(new EndWritten(nextWritePosition));
                     emitComplete();
                 } catch (Throwable e) {
                     emitError(e);

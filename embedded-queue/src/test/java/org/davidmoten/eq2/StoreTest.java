@@ -26,7 +26,7 @@ import io.reactivex.schedulers.Schedulers;
 public class StoreTest {
 
     private static final byte[] MSG = "hello".getBytes(StandardCharsets.UTF_8);
-    private static final byte[] MSG2 = "world".getBytes(StandardCharsets.UTF_8);
+    private static final byte[] MSG2 = "worldiness".getBytes(StandardCharsets.UTF_8);
 
     private static int counter = 1;
 
@@ -44,13 +44,14 @@ public class StoreTest {
 
     @Test
     public void testTwoMessagesInOneSegment() throws Exception {
-        int segmentSize = 1000;
+        int segmentSize = 100;
         File directory = new File("target/" + System.currentTimeMillis() + "_" + (counter++));
         directory.mkdirs();
         Store store = new Store(directory, segmentSize, Schedulers.trampoline());
         Completable added = store.add(MSG).andThen(store.add(MSG2));
         added.test().assertComplete();
-        assertEquals(Arrays.asList("hello", "world"), msgs(store));
+        print(store);
+        assertEquals(Arrays.asList("hello", "worldiness"), msgs(store));
     }
 
     private static void testWriteOneMessage(int segmentSize)
@@ -66,6 +67,12 @@ public class StoreTest {
         File segment = new File(directory, "0");
         assertTrue(segment.exists());
         assertEquals(segmentSize, segment.length());
+        print(store);
+        //
+        assertEquals(Collections.singletonList("hello"), msgs(store));
+    }
+
+    private static void print(Store store) {
         store.segments.stream().forEach(x -> {
             try {
                 System.out.println(x.start + ":");
@@ -77,8 +84,6 @@ public class StoreTest {
                 throw new IORuntimeException(e);
             }
         });
-        //
-        assertEquals(Collections.singletonList("hello"), msgs(store));
     }
 
     private static List<String> msgs(Store store) throws NoSuchAlgorithmException, IOException {
