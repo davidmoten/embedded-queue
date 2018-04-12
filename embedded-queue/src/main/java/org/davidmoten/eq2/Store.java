@@ -8,7 +8,6 @@ import java.nio.ByteBuffer;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.LinkedList;
-import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -16,22 +15,29 @@ import org.davidmoten.eq2.event.AddSegment;
 import org.davidmoten.eq2.event.EndMessage;
 import org.davidmoten.eq2.event.EndWritten;
 import org.davidmoten.eq2.event.Event;
-import org.davidmoten.eq2.event.MesagePart;
+import org.davidmoten.eq2.event.MessagePart;
+import org.davidmoten.eq2.event.Part;
 import org.davidmoten.eq2.event.Written;
+import org.reactivestreams.Subscriber;
+import org.reactivestreams.Subscription;
 
 import com.github.davidmoten.guavamini.Preconditions;
 
+import io.reactivex.Completable;
+import io.reactivex.CompletableObserver;
+import io.reactivex.Flowable;
 import io.reactivex.Scheduler;
+import io.reactivex.Single;
+import io.reactivex.disposables.Disposable;
 import io.reactivex.internal.fuseable.SimplePlainQueue;
 import io.reactivex.internal.queue.MpscLinkedQueue;
-import io.reactivex.schedulers.Schedulers;
 
-public class Store {
+public class Store extends Completable implements Subscription {
 
     final LinkedList<Segment> segments = new LinkedList<>();
     final int segmentSize;
     final int chunkSize = 1024 * 1024;
-    final Scheduler io = Schedulers.from(Executors.newFixedThreadPool(10));
+    final Scheduler io;
     final File directory;
     final long addTimeoutMs = TimeUnit.SECONDS.toMillis(1000);
 
@@ -47,54 +53,86 @@ public class Store {
     private static final int LENGTH_BYTES = 4;
     private final int minMessageSize = LENGTH_BYTES + writeDigest.getDigestLength() + 4;
     private long messageStartPosition;
+    private WriteState writeState = WriteState.SEGMENT_FULL;
+    private Subscriber<Part> subscriber;
+    private Flowable<Part> source;
+    private Subscription sourceSubscription;
+    private CompletableObserver child;
 
     private static enum WriteState {
         SEGMENT_FULL, CREATING_SEGMENT, SEGMENT_READY, WRITING;
     }
 
-    private WriteState writeState = WriteState.SEGMENT_FULL;
-
-    public Store(File directory, int segmentSize) {
+    public Store(File directory, int segmentSize, Scheduler io) {
         this.directory = directory;
         this.segmentSize = segmentSize;
+        this.io = io;
     }
 
-    public boolean add(byte[] bytes) {
+    public Completable add(byte[] bytes) {
         return add(ByteBuffer.wrap(bytes));
     }
 
-    public boolean add(ByteBuffer bb) {
-        if (addPart(bb)) {
-            return endMessage();
-        } else {
-            return false;
-        }
+    public Completable add(ByteBuffer bb) {
+        return add(Flowable.just(bb));
     }
 
-    public boolean addPart(byte[] bytes) {
-        return addPart(ByteBuffer.wrap(bytes));
+    public Completable add(Flowable<ByteBuffer> byteBuffers) {
+        this.source = byteBuffers.map(x -> new MessagePart(x));
+        return this;
     }
 
-    public boolean addPart(ByteBuffer bb) {
-        MesagePart add = new MesagePart(bb);
-        queue.offer(add);
-        drain();
-        try {
-            return add.latch.await(addTimeoutMs, TimeUnit.MILLISECONDS);
-        } catch (InterruptedException e) {
-            throw new RuntimeException(e);
-        }
+    @Override
+    protected void subscribeActual(CompletableObserver child) {
+        subscriber = new Subscriber<Part>() {
+
+            @Override
+            public void onSubscribe(Subscription s) {
+                sourceSubscription = s;
+            }
+
+            @Override
+            public void onNext(Part part) {
+                queue.offer(part);
+                drain();
+            }
+
+            @Override
+            public void onError(Throwable t) {
+                child.onError(t);
+            }
+
+            @Override
+            public void onComplete() {
+                child.onComplete();
+            }
+        };
+        this.child = child;
+        source.subscribe(subscriber);
+        child.onSubscribe(new Disposable() {
+
+            volatile boolean disposed;
+
+            @Override
+            public boolean isDisposed() {
+                return disposed;
+            }
+
+            @Override
+            public void dispose() {
+                disposed = true;
+            }
+        });
     }
 
-    public boolean endMessage() {
-        EndMessage m = new EndMessage();
-        queue.offer(m);
-        drain();
-        try {
-            return m.latch.await(addTimeoutMs, TimeUnit.MILLISECONDS);
-        } catch (InterruptedException e) {
-            throw new RuntimeException(e);
-        }
+    @Override
+    public void request(long n) {
+
+    }
+
+    @Override
+    public void cancel() {
+
     }
 
     private void drain() {
@@ -123,8 +161,8 @@ public class Store {
 
     private void processEvent(Event event) {
         System.out.println(event);
-        if (event instanceof MesagePart) {
-            processEventMessagePart((MesagePart) event);
+        if (event instanceof MessagePart) {
+            processEventMessagePart((MessagePart) event);
         } else if (event instanceof AddSegment) {
             processEventAddSegment((AddSegment) event);
         } else if (event instanceof Written) {
@@ -145,7 +183,7 @@ public class Store {
         // TODO notify readers?
     }
 
-    private void processEventMessagePart(MesagePart event) {
+    private void processEventMessagePart(MessagePart event) {
         if (writeState == WriteState.SEGMENT_FULL) {
             createSegment(event);
         } else if (writeState == WriteState.SEGMENT_READY) {
@@ -191,7 +229,7 @@ public class Store {
         }
     }
 
-    private void writeToSegment(MesagePart event, Segment segment) {
+    private void writeToSegment(MessagePart event, Segment segment) {
         // calculate write position relative to segment start
         long pos = writePosition - segment.start;
         if (pos >= segmentSize - minMessageSize) {
@@ -237,15 +275,28 @@ public class Store {
                     long nextWritePosition = segment.start + pos + bbLength + headerBytes;
                     System.out.println("nextWritePosition = " + nextWritePosition);
                     queue.offer(new Written(nextWritePosition));
-                    event.latch.countDown();
-                } catch (IOException e) {
-                    throw new IORuntimeException(e);
+                } catch (Throwable e) {
+                    emitError(e);
+                } finally {
+                    requestOneMore();
                 }
                 drain();
             });
         }
     }
 
+    private void requestOneMore() {
+        sourceSubscription.request(1);
+    }
+
+    private void emitError(Throwable e) {
+        child.onError(e);
+    }
+
+    private void emitComplete() {
+        child.onComplete();
+    }
+    
     private void writeEndMessage(EndMessage event, Segment segment) {
         long pos = writePosition - segment.start;
         System.out.println(
@@ -298,18 +349,19 @@ public class Store {
                     writeFileStart.seek(messageStartPos - writeSegmentStart.start);
                     System.out.println("Pos=" + pos);
                     int length = (int) (pos - messageStartPos - LENGTH_BYTES);
+                    System.out.println("writing length=" + length);
                     writeFileStart.writeInt(length);
                     if (writeFileStart != writeFile) {
                         writeFileStart.close();
                         writeFileStart = null;
                         writeSegmentStart = null;
                     }
-                    queue.offer(new EndWritten(pos + checksum.length + headerBytes));
-                    event.latch.countDown();
-                } catch (IOException e) {
-                    e.printStackTrace();
-                    throw new IORuntimeException(e);
-                }
+                    queue.offer(
+                            new EndWritten(pos + segment.start + checksum.length + headerBytes));
+                    emitComplete();
+                } catch (Throwable e) {
+                    emitError(e);
+                } 
                 drain();
             });
         }
@@ -334,8 +386,7 @@ public class Store {
     private static void createFixedLengthFile(File file, long segmentSize)
             throws FileNotFoundException, IOException {
         RandomAccessFile f = new RandomAccessFile(file, "rw");
-        f.seek(segmentSize - 1);
-        f.write(0);
+        f.setLength(segmentSize);
         f.close();
     }
 
@@ -346,4 +397,5 @@ public class Store {
             throw new RuntimeException(e);
         }
     }
+
 }

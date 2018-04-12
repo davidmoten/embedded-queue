@@ -9,50 +9,62 @@ import java.io.IOException;
 import java.io.RandomAccessFile;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 import org.junit.Test;
+
+import io.reactivex.Completable;
+import io.reactivex.schedulers.Schedulers;
 
 public class StoreTest {
 
     private static final byte[] MSG = "hello".getBytes(StandardCharsets.UTF_8);
 
+    private static int counter = 1;
+
     @Test
-    public void testOneMessageInOneSegment() throws IOException {
+    public void testOneMessageInOneSegment() throws Exception {
         int segmentSize = 50;
         testWriteOneMessage(segmentSize);
     }
-    
-    @Test(timeout=20000000)
-    public void testOneMessageAcrossTwoSegments() throws IOException {
+
+    @Test(timeout = 20000000)
+    public void testOneMessageAcrossMultipleSegments() throws Exception {
         int segmentSize = 30;
         testWriteOneMessage(segmentSize);
     }
 
-    private static void testWriteOneMessage(int segmentSize) throws IOException {
-        File directory = new File("target/" + System.currentTimeMillis());
+    private static void testWriteOneMessage(int segmentSize)
+            throws IOException, NoSuchAlgorithmException {
+        File directory = new File("target/" + System.currentTimeMillis() + "_" + (counter++));
         directory.mkdirs();
-        Store store = new Store(directory, segmentSize);
-        boolean added = store.add(MSG);
+        Store store = new Store(directory, segmentSize, Schedulers.trampoline());
+        Completable added = store.add(MSG);
+        added.test() //
+                .awaitDone(2, TimeUnit.SECONDS) //
+                .assertComplete();
+
         File segment = new File(directory, "0");
         assertTrue(segment.exists());
         assertEquals(segmentSize, segment.length());
-        assertTrue(added);
         store.segments.stream().forEach(x -> {
             try {
-//                System.out.println(x.start + ":");
+                System.out.println(x.start + ":");
                 byte[] bytes = Files.readAllBytes(store.segments.get(0).file.toPath());
-                for (byte b:bytes) {
-//                    System.out.println(b);
+                for (byte b : bytes) {
+                    System.out.println(b);
                 }
             } catch (IOException e) {
                 throw new IORuntimeException(e);
-            } 
+            }
         });
-        // 
+        //
         List<String> msgs = messages(store) //
                 .stream() //
                 .map(x -> new String(x, StandardCharsets.UTF_8)) //
@@ -60,13 +72,15 @@ public class StoreTest {
         assertEquals(Collections.singletonList("hello"), msgs);
     }
 
-    private static List<byte[]> messages(Store store) throws IOException {
+    private static List<byte[]> messages(Store store) throws IOException, NoSuchAlgorithmException {
+        MessageDigest md5 = MessageDigest.getInstance("MD5");
         List<byte[]> list = new ArrayList<>();
         int i = -1;
         RandomAccessFile file = null;
         int position = Integer.MAX_VALUE;
         ByteArrayOutputStream bytes = null;
         int bytesToRead = 0;
+        boolean readingChecksum = false;
         while (true) {
             if (file == null || position >= file.length()) {
                 i += 1;
@@ -86,18 +100,34 @@ public class StoreTest {
                     bytes = new ByteArrayOutputStream();
                 }
                 bytesToRead = file.readInt();
-                if (bytesToRead == 0) {
-                    break;
+                System.out.println("bytesToRead=" + bytesToRead);
+                if (bytesToRead == -1) {
+                    position = (int) file.length();
+                } else {
+                    if (bytesToRead == 0) {
+                        break;
+                    }
+                    position += 4;
                 }
-                position+=4;
-            } 
+            }
+            System.out.println("length=" + file.length() + ", position=" + position);
             int remaining = (int) (file.length() - position);
             int n = Math.min(remaining, bytesToRead);
             byte[] b = new byte[n];
             int numRead = file.read(b);
             assert numRead == n;
-            bytes.write(b);
+            if (!readingChecksum) {
+                bytes.write(b);
+            }
             bytesToRead -= n;
+            if (bytesToRead == 0) {
+                if (!readingChecksum) {
+                    readingChecksum = true;
+                    bytesToRead = md5.getDigestLength();
+                } else {
+                    readingChecksum = false;
+                }
+            }
             position += n;
         }
         return list;
