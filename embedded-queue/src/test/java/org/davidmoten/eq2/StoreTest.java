@@ -93,7 +93,6 @@ public class StoreTest {
             }
             if (bytesToRead == 0) {
                 if (bytes != null) {
-                    System.out.println("adding " + new String(bytes.toByteArray()));
                     list.add(bytes.toByteArray());
                     bytes.reset();
                 } else {
@@ -110,7 +109,6 @@ public class StoreTest {
                     position += 4;
                 }
             }
-            System.out.println("length=" + file.length() + ", position=" + position);
             int remaining = (int) (file.length() - position);
             int n = Math.min(remaining, bytesToRead);
             byte[] b = new byte[n];

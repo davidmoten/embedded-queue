@@ -158,9 +158,7 @@ public class Store extends Completable implements Subscription {
                     }
                 }
                 missed = wip.addAndGet(-missed);
-                System.out.println("missed=" + missed);
                 if (missed == 0) {
-                    System.out.println("finished drain");
                     return;
                 }
             }
@@ -195,7 +193,7 @@ public class Store extends Completable implements Subscription {
         if (writeState == WriteState.SEGMENT_FULL) {
             createSegment(event);
         } else if (writeState == WriteState.SEGMENT_READY) {
-            writeToSegment(event, segments.getLast());
+            writeMessagePart(event, segments.getLast());
         }
         // should not be at WRITING state because is synchronous
     }
@@ -221,7 +219,7 @@ public class Store extends Completable implements Subscription {
         long pos = writePosition;
         io.scheduleDirect(() -> {
             Segment segment = createSegment(pos);
-            queue.offer(new AddSegment(segment));
+            queue.offer(new AddSegment(segment, segmentSize));
             // retry with add event
             queue.offer(event);
             drain();
@@ -237,7 +235,7 @@ public class Store extends Completable implements Subscription {
         }
     }
 
-    private void writeToSegment(MessagePart event, Segment segment) {
+    private void writeMessagePart(MessagePart event, Segment segment) {
         // calculate write position relative to segment start
         long pos = writePosition - segment.start;
         if (pos >= segmentSize - minMessageSize) {
@@ -306,8 +304,8 @@ public class Store extends Completable implements Subscription {
 
     private void writeEndMessage(EndMessage event, Segment segment) {
         long pos = writePosition - segment.start;
-        System.out.println(
-                "end pos=" + pos + ", wp=" + writePosition + ", mstartpos=" + messageStartPosition);
+        System.out.println("end pos=" + pos + ", wp=" + writePosition + ", mstartpos="
+                + messageStartPosition + ", segment=" + segment.file.getName());
         if (pos >= segmentSize - minMessageSize) {
             if (pos < segmentSize) {
                 // terminate file so read won't be attempted past that point (will move to next
@@ -355,7 +353,7 @@ public class Store extends Completable implements Subscription {
                     // TODO write length 0 after checksum?
                     writeFileStart.seek(messageStartPos - writeSegmentStart.start);
                     System.out.println("Pos=" + pos);
-                    int length = (int) (pos - messageStartPos - LENGTH_BYTES);
+                    final int length = (int) (pos + segment.start - messageStartPos - LENGTH_BYTES);
                     System.out.println("writing length=" + length);
                     writeFileStart.writeInt(length);
                     if (writeFileStart != writeFile) {
