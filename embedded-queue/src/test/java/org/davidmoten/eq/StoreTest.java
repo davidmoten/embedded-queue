@@ -1,4 +1,4 @@
-package org.davidmoten.eq2;
+package org.davidmoten.eq;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNull;
@@ -19,6 +19,8 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
+import org.davidmoten.eq.IORuntimeException;
+import org.davidmoten.eq.Store;
 import org.junit.Test;
 
 import io.reactivex.Completable;
@@ -58,7 +60,7 @@ public class StoreTest {
         int segmentSize = 30;
         testWriteOneMessage(segmentSize, ioAsync);
     }
-
+    
     @Test
     public void testTwoMessagesInOneSegment() throws Exception {
         int segmentSize = 100;

@@ -1,4 +1,4 @@
-package org.davidmoten.eq2.event;
+package org.davidmoten.eq.event;
 
 public class PartWritten implements Event {
     public final long writePosition;

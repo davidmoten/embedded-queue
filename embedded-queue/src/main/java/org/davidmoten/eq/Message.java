@@ -1,0 +1,5 @@
+package org.davidmoten.eq;
+
+public class Message {
+
+}

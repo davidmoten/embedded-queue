@@ -1,10 +1,10 @@
-package org.davidmoten.eq2.event;
+package org.davidmoten.eq.event;
 
 import java.io.IOException;
 import java.io.RandomAccessFile;
 
-import org.davidmoten.eq2.IORuntimeException;
-import org.davidmoten.eq2.Segment;
+import org.davidmoten.eq.IORuntimeException;
+import org.davidmoten.eq.Segment;
 
 public class SegmentCreated implements Event {
 

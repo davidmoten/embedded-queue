@@ -1,4 +1,4 @@
-package org.davidmoten.eq2;
+package org.davidmoten.eq;
 
 import java.io.File;
 import java.io.FileNotFoundException;
@@ -11,13 +11,13 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.zip.CRC32;
 import java.util.zip.Checksum;
 
-import org.davidmoten.eq2.event.EndMessage;
-import org.davidmoten.eq2.event.EndWritten;
-import org.davidmoten.eq2.event.Event;
-import org.davidmoten.eq2.event.MessagePart;
-import org.davidmoten.eq2.event.Part;
-import org.davidmoten.eq2.event.PartWritten;
-import org.davidmoten.eq2.event.SegmentCreated;
+import org.davidmoten.eq.event.EndMessage;
+import org.davidmoten.eq.event.EndWritten;
+import org.davidmoten.eq.event.Event;
+import org.davidmoten.eq.event.MessagePart;
+import org.davidmoten.eq.event.Part;
+import org.davidmoten.eq.event.PartWritten;
+import org.davidmoten.eq.event.SegmentCreated;
 import org.reactivestreams.Subscriber;
 import org.reactivestreams.Subscription;
 

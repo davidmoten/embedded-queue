@@ -1,4 +1,4 @@
-package org.davidmoten.eq2;
+package org.davidmoten.eq;
 
 import java.io.File;
 import java.security.MessageDigest;
