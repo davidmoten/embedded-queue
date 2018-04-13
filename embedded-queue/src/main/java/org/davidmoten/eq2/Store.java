@@ -57,6 +57,7 @@ public class Store extends Completable implements Subscription {
     private Flowable<Part> source;
     private Subscription sourceSubscription;
     private CompletableObserver child;
+    private volatile boolean messageEnded;
 
     private static enum WriteState {
         SEGMENT_FULL, CREATING_SEGMENT, SEGMENT_READY, WRITING;
@@ -77,7 +78,9 @@ public class Store extends Completable implements Subscription {
     }
 
     public Completable add(Flowable<ByteBuffer> byteBuffers) {
-        this.source = byteBuffers.map(x -> new MessagePart(x));
+        this.source = byteBuffers //
+                .map(x -> (Part) new MessagePart(x)) //
+                .concatWith(Flowable.just(new EndMessage()));
         return this;
     }
 
@@ -106,7 +109,6 @@ public class Store extends Completable implements Subscription {
             @Override
             public void onComplete() {
                 System.out.println("source complete");
-                queue.offer(new EndMessage());
                 drain();
             }
         };
@@ -276,10 +278,9 @@ public class Store extends Completable implements Subscription {
                         headerBytes = 0;
                     }
                     int bbLength = event.bb.remaining();
-                    System.out.println("writing '"+ new String(event.bb.array(), event.bb.arrayOffset() + event.bb.position(),
-                            event.bb.remaining()) + "'");
-                    f.write(event.bb.array(), event.bb.arrayOffset() + event.bb.position(),
-                            event.bb.remaining());
+                    System.out.println("writing '" + new String(event.bb.array(),
+                            event.bb.arrayOffset() + event.bb.position(), event.bb.remaining()) + "'");
+                    f.write(event.bb.array(), event.bb.arrayOffset() + event.bb.position(), event.bb.remaining());
                     // watch out because update(ByteBuffer) changes position
                     writeDigest.update(event.bb);
                     long nextWritePosition = segment.start + pos + bbLength + headerBytes;
@@ -303,13 +304,14 @@ public class Store extends Completable implements Subscription {
     }
 
     private void emitComplete() {
+        System.out.println("emitting complete");
         child.onComplete();
     }
 
     private void writeEndMessage(EndMessage event, Segment segment) {
         long pos = writePosition - segment.start;
-        System.out.println("end pos=" + pos + ", wp=" + writePosition + ", mstartpos="
-                + messageStartPosition + ", segment=" + segment.file.getName());
+        System.out.println("end pos=" + pos + ", wp=" + writePosition + ", mstartpos=" + messageStartPosition
+                + ", segment=" + segment.file.getName());
         if (pos >= segmentSize - minMessageSize) {
             if (pos < segmentSize) {
                 // terminate file so read won't be attempted past that point (will move to next
@@ -393,8 +395,7 @@ public class Store extends Completable implements Subscription {
         return file;
     }
 
-    private static void createFixedLengthFile(File file, long segmentSize)
-            throws FileNotFoundException, IOException {
+    private static void createFixedLengthFile(File file, long segmentSize) throws FileNotFoundException, IOException {
         RandomAccessFile f = new RandomAccessFile(file, "rw");
         f.setLength(segmentSize);
         f.close();

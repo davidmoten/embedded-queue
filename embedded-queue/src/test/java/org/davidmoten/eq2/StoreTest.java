@@ -16,13 +16,14 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
+import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 import org.junit.Test;
 
 import io.reactivex.Completable;
-import io.reactivex.Flowable;
+import io.reactivex.Scheduler;
 import io.reactivex.schedulers.Schedulers;
 
 public class StoreTest {
@@ -30,18 +31,33 @@ public class StoreTest {
     private static final byte[] MSG = "hello".getBytes(StandardCharsets.UTF_8);
     private static final byte[] MSG2 = "worldiness".getBytes(StandardCharsets.UTF_8);
 
+    private static final Scheduler ioSync = Schedulers.trampoline();
+    private static final Scheduler ioAsync = Schedulers.from(Executors.newFixedThreadPool(10));
+
     private static int counter = 1;
 
     @Test
-    public void testOneMessageInOneSegment() throws Exception {
+    public void testOneMessageInOneSegmentSynchronous() throws Exception {
         int segmentSize = 50;
-        testWriteOneMessage(segmentSize);
+        testWriteOneMessage(segmentSize, ioSync);
     }
 
     @Test
-    public void testOneMessageAcrossMultipleSegments() throws Exception {
+    public void testOneMessageAcrossTwoSegmentsSynchronous() throws Exception {
         int segmentSize = 30;
-        testWriteOneMessage(segmentSize);
+        testWriteOneMessage(segmentSize, ioSync);
+    }
+    
+    @Test
+    public void testOneMessageInOneSegmentAsynchronous() throws Exception {
+        int segmentSize = 50;
+        testWriteOneMessage(segmentSize, ioAsync);
+    }
+
+    @Test
+    public void testOneMessageAcrossTwoSegmentsAsynchronous() throws Exception {
+        int segmentSize = 30;
+        testWriteOneMessage(segmentSize, ioAsync);
     }
 
     @Test
@@ -56,10 +72,10 @@ public class StoreTest {
         assertEquals(Arrays.asList("hello", "worldiness"), msgs(store));
     }
 
-    private static void testWriteOneMessage(int segmentSize) throws IOException, NoSuchAlgorithmException {
+    private static void testWriteOneMessage(int segmentSize, Scheduler io) throws IOException, NoSuchAlgorithmException {
         File directory = new File("target/" + System.currentTimeMillis() + "_" + (counter++));
         directory.mkdirs();
-        Store store = new Store(directory, segmentSize, Schedulers.trampoline());
+        Store store = new Store(directory, segmentSize, io);
         Completable added = store.add(MSG);
         added.test() //
                 .awaitDone(2, TimeUnit.SECONDS) //
