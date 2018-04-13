@@ -1,8 +1,14 @@
 package org.davidmoten.eq2.event;
 
-public class EndMessage implements Part {
+public final class EndMessage implements Part {
 
-    public EndMessage() {
+    private static final EndMessage INSTANCE = new EndMessage();
+    
+    public static EndMessage instance() {
+        return INSTANCE;
+    }
+    
+    private EndMessage() {
     }
 
 }

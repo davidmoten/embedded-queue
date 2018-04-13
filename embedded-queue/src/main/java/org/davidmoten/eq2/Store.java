@@ -31,7 +31,7 @@ import io.reactivex.disposables.Disposable;
 import io.reactivex.internal.fuseable.SimplePlainQueue;
 import io.reactivex.internal.queue.MpscLinkedQueue;
 
-public class Store extends Completable implements Subscription {
+public class Store extends Completable {
 
     final LinkedList<Segment> segments = new LinkedList<>();
     final int segmentSize;
@@ -42,27 +42,67 @@ public class Store extends Completable implements Subscription {
 
     private final AtomicInteger wip = new AtomicInteger();
 
+    /**
+     * Holds events for serialized processing by {@code drain} method.
+     */
     private final SimplePlainQueue<Event> queue = new MpscLinkedQueue<>();
+
+    /**
+     * Corresponds to the last segment and is where the next write will occur (not
+     * including the rewrite of a length field at the start of a message).
+     */
     private RandomAccessFile writeFile;
+
+    /**
+     * The start of the message currently being written may be in an another
+     * segment. Once the last bytes of the message are written (and its crc32) then
+     * the length field (first 4 bytes of the message) are rewritten with the actual
+     * value to indicate to a reader that it can consume that message.
+     */
     private RandomAccessFile writeFileStart;
+
+    /**
+     * The segment corresponding to {@code writeFileStart}.
+     */
     private Segment writeSegmentStart;
+
+    /**
+     * A message is composed of many ByteBuffer parts and and EndMessage part. If
+     * and only if the first part has not been written then {@code isFirstPart} will
+     * be true.
+     */
     private boolean isFirstPart = true;
+
+    /**
+     * The value where the next part will start writing. This is the long value used
+     * as a position across all segments. Each segment is named with its start write
+     * position.
+     */
     private long writePosition;
-    // private final MessageDigest writeDigest = createDefaultMessageDigest();
-    private final Checksum writeDigest = new CRC32();
-    private static final int CHECKSUM_BYTES = 4;
-    private static final int LENGTH_BYTES = 4;
-    private final int minMessageSize = LENGTH_BYTES + CHECKSUM_BYTES + 4;
+
+    /**
+     * The position across all segments where the message's first bytes are written.
+     */
     private long messageStartPosition;
+
+    /**
+     * The current state of the writer.
+     */
     private WriteState writeState = WriteState.SEGMENT_FULL;
-    private Subscriber<Part> subscriber;
-    private Flowable<Part> source;
-    private Subscription sourceSubscription;
-    private CompletableObserver child;
 
     private static enum WriteState {
         SEGMENT_FULL, CREATING_SEGMENT, SEGMENT_READY, WRITING;
     }
+
+    private final Checksum writeDigest = new CRC32();
+    private static final int CHECKSUM_BYTES = 4;
+    private static final int LENGTH_BYTES = 4;
+    private final int minMessageSize = LENGTH_BYTES + CHECKSUM_BYTES + 4;
+
+    private Subscriber<Part> subscriber;
+    private Flowable<Part> source;
+    private Subscription sourceSubscription;
+    private CompletableObserver child;
 
     public Store(File directory, int segmentSize, Scheduler io) {
         this.directory = directory;
@@ -81,7 +121,7 @@ public class Store extends Completable implements Subscription {
     public Completable add(Flowable<ByteBuffer> byteBuffers) {
         this.source = byteBuffers //
                 .map(x -> (Part) new MessagePart(x)) //
-                .concatWith(Flowable.just(new EndMessage()));
+                .concatWith(Flowable.just(EndMessage.instance()));
         return this;
     }
 
@@ -126,19 +166,10 @@ public class Store extends Completable implements Subscription {
             @Override
             public void dispose() {
                 disposed = true;
+                // TODO write diposal logic
             }
         });
         source.subscribe(subscriber);
-
-    }
-
-    @Override
-    public void request(long n) {
-
-    }
-
-    @Override
-    public void cancel() {
 
     }
 
