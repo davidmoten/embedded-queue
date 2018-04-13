@@ -10,7 +10,6 @@ import java.io.IOException;
 import java.io.RandomAccessFile;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
-import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -111,7 +110,6 @@ public class StoreTest {
     }
 
     private static List<byte[]> messages(Store store) throws IOException, NoSuchAlgorithmException {
-        MessageDigest md5 = MessageDigest.getInstance("MD5");
         List<byte[]> list = new ArrayList<>();
         int i = -1;
         RandomAccessFile file = null;
