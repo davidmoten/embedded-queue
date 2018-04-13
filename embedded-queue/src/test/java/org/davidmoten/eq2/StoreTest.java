@@ -159,7 +159,7 @@ public class StoreTest {
             if (bytesToRead == 0) {
                 if (!readingChecksum) {
                     readingChecksum = true;
-                    bytesToRead = md5.getDigestLength();
+                    bytesToRead = store.checksumBytes();
                 } else {
                     readingChecksum = false;
                 }

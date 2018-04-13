@@ -7,17 +7,21 @@ import java.io.RandomAccessFile;
 import java.nio.ByteBuffer;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.security.Security;
+import java.util.Arrays;
 import java.util.LinkedList;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.zip.CRC32;
+import java.util.zip.Checksum;
 
-import org.davidmoten.eq2.event.SegmentCreated;
 import org.davidmoten.eq2.event.EndMessage;
 import org.davidmoten.eq2.event.EndWritten;
 import org.davidmoten.eq2.event.Event;
 import org.davidmoten.eq2.event.MessagePart;
 import org.davidmoten.eq2.event.Part;
 import org.davidmoten.eq2.event.PartWritten;
+import org.davidmoten.eq2.event.SegmentCreated;
 import org.reactivestreams.Subscriber;
 import org.reactivestreams.Subscription;
 
@@ -48,16 +52,17 @@ public class Store extends Completable implements Subscription {
     private Segment writeSegmentStart;
     private boolean isFirstPart = true;
     private long writePosition;
-    private final MessageDigest writeDigest = createDefaultMessageDigest();
+    // private final MessageDigest writeDigest = createDefaultMessageDigest();
+    private final Checksum writeDigest = new CRC32();
+    private static final int CHECKSUM_BYTES = 4;
     private static final int LENGTH_BYTES = 4;
-    private final int minMessageSize = LENGTH_BYTES + writeDigest.getDigestLength() + 4;
+    private final int minMessageSize = LENGTH_BYTES + CHECKSUM_BYTES + 4;
     private long messageStartPosition;
     private WriteState writeState = WriteState.SEGMENT_FULL;
     private Subscriber<Part> subscriber;
     private Flowable<Part> source;
     private Subscription sourceSubscription;
     private CompletableObserver child;
-    private volatile boolean messageEnded;
 
     private static enum WriteState {
         SEGMENT_FULL, CREATING_SEGMENT, SEGMENT_READY, WRITING;
@@ -278,11 +283,13 @@ public class Store extends Completable implements Subscription {
                         headerBytes = 0;
                     }
                     int bbLength = event.bb.remaining();
+                    assert event.bb.hasArray();
                     System.out.println("writing '" + new String(event.bb.array(),
                             event.bb.arrayOffset() + event.bb.position(), event.bb.remaining()) + "'");
                     f.write(event.bb.array(), event.bb.arrayOffset() + event.bb.position(), event.bb.remaining());
                     // watch out because update(ByteBuffer) changes position
-                    writeDigest.update(event.bb);
+                    writeDigest.update(event.bb.array(), event.bb.arrayOffset() + event.bb.position(),
+                            event.bb.remaining());
                     long nextWritePosition = segment.start + pos + bbLength + headerBytes;
                     System.out.println("nextWritePosition = " + nextWritePosition);
                     queue.offer(new PartWritten(nextWritePosition));
@@ -354,8 +361,8 @@ public class Store extends Completable implements Subscription {
                     } else {
                         headerBytes = 0;
                     }
-                    byte[] checksum = writeDigest.digest();
-                    f.write(checksum);
+                    int checksum = (int) writeDigest.getValue();
+                    f.writeInt(checksum);
                     // TODO write length 0 after checksum?
                     writeFileStart.seek(messageStartPos - writeSegmentStart.start);
                     System.out.println("Pos=" + pos);
@@ -367,7 +374,7 @@ public class Store extends Completable implements Subscription {
                         writeFileStart = null;
                         writeSegmentStart = null;
                     }
-                    long nextWritePosition = pos + segment.start + checksum.length + headerBytes;
+                    long nextWritePosition = pos + segment.start + CHECKSUM_BYTES + headerBytes;
                     System.out.println("nextWritePosition=" + nextWritePosition);
                     queue.offer(new EndWritten(nextWritePosition));
                     emitComplete();
@@ -401,12 +408,8 @@ public class Store extends Completable implements Subscription {
         f.close();
     }
 
-    private static MessageDigest createDefaultMessageDigest() {
-        try {
-            return MessageDigest.getInstance("MD5");
-        } catch (NoSuchAlgorithmException e) {
-            throw new RuntimeException(e);
-        }
+    public int checksumBytes() {
+        return CHECKSUM_BYTES;
     }
 
 }
