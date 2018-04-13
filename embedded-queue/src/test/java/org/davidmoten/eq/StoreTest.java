@@ -15,6 +15,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
+import java.util.UUID;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
@@ -71,6 +72,22 @@ public class StoreTest {
         assertNull(store.add(MSG2).blockingGet());
         print(store);
         assertEquals(Arrays.asList("hello", "worldiness"), msgs(store));
+    }
+    
+    @Test
+    public void testOneLargeMessageSpanningManySegments() throws IOException, NoSuchAlgorithmException {
+        ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+        for (int i = 0; i<=1000;i++) {
+            bytes.write(UUID.randomUUID().toString().getBytes());
+        }
+        byte[] LONG_MESSAGE = bytes.toByteArray();
+        int segmentSize = 100;
+        File directory = new File("target/" + System.currentTimeMillis() + "_" + (counter++));
+        directory.mkdirs();
+        Store store = new Store(directory, segmentSize, Schedulers.trampoline());
+        assertNull(store.add(LONG_MESSAGE).blockingGet());
+        print(store);
+        assertEquals(Arrays.asList(new String(LONG_MESSAGE)), msgs(store));
     }
 
     private static void testWriteOneMessage(int segmentSize, Scheduler io) throws IOException, NoSuchAlgorithmException {
