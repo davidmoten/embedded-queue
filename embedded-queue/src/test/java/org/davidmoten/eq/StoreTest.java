@@ -63,9 +63,7 @@ public class StoreTest {
     @Test
     public void testTwoMessagesInOneSegment() throws Exception {
         int segmentSize = 100;
-        File directory = new File("target/" + System.currentTimeMillis() + "_" + (counter++));
-        directory.mkdirs();
-        Store store = new Store(directory, segmentSize, Schedulers.trampoline());
+        Store store = new Store(nextDirectory(), segmentSize, Schedulers.trampoline());
         assertNull(store.add(MSG).blockingGet());
         assertNull(store.add(MSG2).blockingGet());
         print(store);
@@ -74,17 +72,25 @@ public class StoreTest {
 
     @Test
     public void testOneLargeMessageSpanningManySegments() throws IOException, NoSuchAlgorithmException {
+        int segmentSize = 100;
+        Store store = new Store(nextDirectory(), segmentSize, Schedulers.trampoline());
         byte[] msg = createLongMessage();
         System.out.println("message length=" + msg.length);
-        int segmentSize = 100;
-        File directory = new File("target/" + System.currentTimeMillis() + "_" + (counter++));
-        directory.mkdirs();
-        Store store = new Store(directory, segmentSize, Schedulers.trampoline());
-        assertNull(store.add(msg).blockingGet());
-        print(store);
-        System.out.println("segments=" + store.segments.size());
-        assertTrue(store.segments.size() > 2);
-        assertEquals(Arrays.asList(new String(msg)), msgs(store));
+        List<String> expected = new ArrayList<String>();
+        for (int i = 0; i < 10; i++) {
+            assertNull(store.add(msg).blockingGet());
+            print(store);
+            System.out.println("segments=" + store.segments.size());
+            assertTrue(store.segments.size() > 2);
+            expected.add(new String(msg));
+            assertEquals(expected, msgs(store));
+        }
+    }
+
+    private static File nextDirectory() {
+        File f = new File("target/" + System.currentTimeMillis() + "_" + (counter++));
+        f.mkdirs();
+        return f;
     }
 
     private byte[] createLongMessage() throws IOException {
@@ -98,15 +104,13 @@ public class StoreTest {
 
     private static void testWriteOneMessage(int segmentSize, Scheduler io)
             throws IOException, NoSuchAlgorithmException {
-        File directory = new File("target/" + System.currentTimeMillis() + "_" + (counter++));
-        directory.mkdirs();
-        Store store = new Store(directory, segmentSize, io);
+        Store store = new Store(nextDirectory(), segmentSize, io);
         Completable added = store.add(MSG);
         added.test() //
                 .awaitDone(2, TimeUnit.SECONDS) //
                 .assertComplete();
 
-        File segment = new File(directory, "0");
+        File segment = new File(store.directory, "0");
         assertTrue(segment.exists());
         assertEquals(segmentSize, segment.length());
         print(store);
