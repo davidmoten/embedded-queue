@@ -22,6 +22,8 @@ import java.util.stream.Collectors;
 
 import org.junit.Test;
 
+import com.github.davidmoten.guavamini.Lists;
+
 import io.reactivex.Completable;
 import io.reactivex.Scheduler;
 import io.reactivex.schedulers.Schedulers;
@@ -76,14 +78,16 @@ public class StoreTest {
         Store store = new Store(nextDirectory(), segmentSize, Schedulers.trampoline());
         byte[] msg = createLongMessage();
         System.out.println("message length=" + msg.length);
-        List<String> expected = new ArrayList<String>();
-        for (int i = 0; i < 10; i++) {
+        String expected = new String(msg);
+        for (int i = 1; i <= 3; i++) {
+            System.out.println("---" + i + "---");
             assertNull(store.add(msg).blockingGet());
             print(store);
             System.out.println("segments=" + store.segments.size());
             assertTrue(store.segments.size() > 2);
-            expected.add(new String(msg));
-            assertEquals(expected, msgs(store));
+            List<String> msgs = msgs(store);
+            assertEquals(i, msgs.size());
+            assertEquals(expected, msgs.get(msgs.size() - 1));
         }
     }
 
@@ -95,7 +99,7 @@ public class StoreTest {
 
     private byte[] createLongMessage() throws IOException {
         ByteArrayOutputStream bytes = new ByteArrayOutputStream();
-        for (int i = 0; i <= 100; i++) {
+        for (int i = 0; i <=14; i++) {
             bytes.write(UUID.randomUUID().toString().getBytes());
         }
         byte[] LONG_MESSAGE = bytes.toByteArray();
@@ -169,7 +173,9 @@ public class StoreTest {
                 bytesToRead = file.readInt();
                 System.out.println("bytesToRead=" + bytesToRead);
                 if (bytesToRead == -1) {
+                    // is end of current segment, move to next
                     position = (int) file.length();
+                    bytesToRead = 0;
                 } else {
                     if (bytesToRead == 0) {
                         break;
@@ -178,23 +184,28 @@ public class StoreTest {
                 }
             }
             int remaining = (int) (file.length() - position);
-            int n = Math.min(remaining, bytesToRead);
-            byte[] b = new byte[n];
-            int numRead = file.read(b);
-            assert numRead == n;
-            if (!readingChecksum) {
-                bytes.write(b);
-            }
-            bytesToRead -= n;
-            if (bytesToRead == 0) {
-                if (!readingChecksum) {
-                    readingChecksum = true;
-                    bytesToRead = store.checksumBytes();
-                } else {
-                    readingChecksum = false;
+            if (remaining > 0) {
+                int n = Math.min(remaining, bytesToRead);
+                if (n < 0) {
+                    throw new NegativeArraySizeException("n=" + n + ", bytesToRead=" + bytesToRead);
                 }
+                byte[] b = new byte[n];
+                int numRead = file.read(b);
+                assert numRead == n;
+                if (!readingChecksum) {
+                    bytes.write(b);
+                }
+                bytesToRead -= n;
+                if (bytesToRead == 0) {
+                    if (!readingChecksum) {
+                        readingChecksum = true;
+                        bytesToRead = store.checksumBytes();
+                    } else {
+                        readingChecksum = false;
+                    }
+                }
+                position += n;
             }
-            position += n;
         }
         return list;
     }

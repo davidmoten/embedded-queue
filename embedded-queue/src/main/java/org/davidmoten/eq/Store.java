@@ -241,6 +241,7 @@ public class Store extends Completable {
         isFirstPart = true;
         writeFileStart = null;
         writeSegmentStart = null;
+        emitComplete();
     }
 
     private void setWritePosition(long p) {
@@ -414,7 +415,6 @@ public class Store extends Completable {
                     long nextWritePosition = pos + segment.start + CHECKSUM_BYTES + headerBytes;
                     System.out.println("nextWritePosition=" + nextWritePosition);
                     queue.offer(new EndWritten(nextWritePosition));
-                    emitComplete();
                 } catch (Throwable e) {
                     emitError(e);
                 }
