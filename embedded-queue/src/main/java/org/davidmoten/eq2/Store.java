@@ -35,7 +35,6 @@ public class Store extends Completable {
 
     final LinkedList<Segment> segments = new LinkedList<>();
     final int segmentSize;
-    final int chunkSize = 1024 * 1024;
     final Scheduler io;
     final File directory;
     final long addTimeoutMs = TimeUnit.SECONDS.toMillis(1000);
