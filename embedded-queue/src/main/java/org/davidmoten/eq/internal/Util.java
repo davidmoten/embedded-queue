@@ -1,10 +1,12 @@
-package org.davidmoten.eq;
+package org.davidmoten.eq.internal;
 
 import java.io.IOException;
 import java.io.OutputStream;
 import java.io.RandomAccessFile;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicLong;
+
+import org.davidmoten.eq.IORuntimeException;
 
 class Util {
 

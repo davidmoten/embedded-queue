@@ -1,9 +1,6 @@
-package org.davidmoten.eq;
+package org.davidmoten.eq.internal;
 
 import java.io.File;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
-import java.util.List;
 
 public class Segment {
      public final File file;

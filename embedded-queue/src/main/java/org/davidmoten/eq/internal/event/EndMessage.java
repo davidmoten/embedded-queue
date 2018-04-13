@@ -1,4 +1,4 @@
-package org.davidmoten.eq.event;
+package org.davidmoten.eq.internal.event;
 
 public final class EndMessage implements Part {
 

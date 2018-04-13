@@ -11,13 +11,14 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.zip.CRC32;
 import java.util.zip.Checksum;
 
-import org.davidmoten.eq.event.EndMessage;
-import org.davidmoten.eq.event.EndWritten;
-import org.davidmoten.eq.event.Event;
-import org.davidmoten.eq.event.MessagePart;
-import org.davidmoten.eq.event.Part;
-import org.davidmoten.eq.event.PartWritten;
-import org.davidmoten.eq.event.SegmentCreated;
+import org.davidmoten.eq.internal.Segment;
+import org.davidmoten.eq.internal.event.EndMessage;
+import org.davidmoten.eq.internal.event.EndWritten;
+import org.davidmoten.eq.internal.event.Event;
+import org.davidmoten.eq.internal.event.MessagePart;
+import org.davidmoten.eq.internal.event.Part;
+import org.davidmoten.eq.internal.event.PartWritten;
+import org.davidmoten.eq.internal.event.SegmentCreated;
 import org.reactivestreams.Subscriber;
 import org.reactivestreams.Subscription;
 

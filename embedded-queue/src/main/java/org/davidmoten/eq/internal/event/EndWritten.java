@@ -1,6 +1,6 @@
-package org.davidmoten.eq.event;
+package org.davidmoten.eq.internal.event;
 
-import org.davidmoten.eq.event.Event;
+import org.davidmoten.eq.internal.event.Event;
 
 public class EndWritten implements Event {
 
