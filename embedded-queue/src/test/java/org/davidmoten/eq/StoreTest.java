@@ -20,8 +20,6 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
-import org.davidmoten.eq.IORuntimeException;
-import org.davidmoten.eq.Store;
 import org.junit.Test;
 
 import io.reactivex.Completable;
@@ -49,7 +47,7 @@ public class StoreTest {
         int segmentSize = 30;
         testWriteOneMessage(segmentSize, ioSync);
     }
-    
+
     @Test
     public void testOneMessageInOneSegmentAsynchronous() throws Exception {
         int segmentSize = 50;
@@ -61,7 +59,7 @@ public class StoreTest {
         int segmentSize = 30;
         testWriteOneMessage(segmentSize, ioAsync);
     }
-    
+
     @Test
     public void testTwoMessagesInOneSegment() throws Exception {
         int segmentSize = 100;
@@ -73,24 +71,33 @@ public class StoreTest {
         print(store);
         assertEquals(Arrays.asList("hello", "worldiness"), msgs(store));
     }
-    
+
     @Test
     public void testOneLargeMessageSpanningManySegments() throws IOException, NoSuchAlgorithmException {
-        ByteArrayOutputStream bytes = new ByteArrayOutputStream();
-        for (int i = 0; i<=1000;i++) {
-            bytes.write(UUID.randomUUID().toString().getBytes());
-        }
-        byte[] LONG_MESSAGE = bytes.toByteArray();
+        byte[] msg = createLongMessage();
+        System.out.println("message length=" + msg.length);
         int segmentSize = 100;
         File directory = new File("target/" + System.currentTimeMillis() + "_" + (counter++));
         directory.mkdirs();
         Store store = new Store(directory, segmentSize, Schedulers.trampoline());
-        assertNull(store.add(LONG_MESSAGE).blockingGet());
+        assertNull(store.add(msg).blockingGet());
         print(store);
-        assertEquals(Arrays.asList(new String(LONG_MESSAGE)), msgs(store));
+        System.out.println("segments=" + store.segments.size());
+        assertTrue(store.segments.size() > 2);
+        assertEquals(Arrays.asList(new String(msg)), msgs(store));
     }
 
-    private static void testWriteOneMessage(int segmentSize, Scheduler io) throws IOException, NoSuchAlgorithmException {
+    private byte[] createLongMessage() throws IOException {
+        ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+        for (int i = 0; i <= 100; i++) {
+            bytes.write(UUID.randomUUID().toString().getBytes());
+        }
+        byte[] LONG_MESSAGE = bytes.toByteArray();
+        return LONG_MESSAGE;
+    }
+
+    private static void testWriteOneMessage(int segmentSize, Scheduler io)
+            throws IOException, NoSuchAlgorithmException {
         File directory = new File("target/" + System.currentTimeMillis() + "_" + (counter++));
         directory.mkdirs();
         Store store = new Store(directory, segmentSize, io);
@@ -103,22 +110,24 @@ public class StoreTest {
         assertTrue(segment.exists());
         assertEquals(segmentSize, segment.length());
         print(store);
-        //
         assertEquals(Collections.singletonList("hello"), msgs(store));
     }
 
+    @SuppressWarnings("unused")
     private static void print(Store store) {
-        store.segments.stream().forEach(x -> {
-            try {
-                System.out.println(x.start + ":");
-                byte[] bytes = Files.readAllBytes(store.segments.get(0).file.toPath());
-                for (byte b : bytes) {
-                    System.out.println(b);
+        if (false) {
+            store.segments.stream().forEach(x -> {
+                try {
+                    System.out.println(x.start + ":");
+                    byte[] bytes = Files.readAllBytes(store.segments.get(0).file.toPath());
+                    for (byte b : bytes) {
+                        System.out.println(b);
+                    }
+                } catch (IOException e) {
+                    throw new IORuntimeException(e);
                 }
-            } catch (IOException e) {
-                throw new IORuntimeException(e);
-            }
-        });
+            });
+        }
     }
 
     private static List<String> msgs(Store store) throws NoSuchAlgorithmException, IOException {

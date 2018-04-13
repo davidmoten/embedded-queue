@@ -94,6 +94,9 @@ public class Store extends Completable {
         SEGMENT_FULL, CREATING_SEGMENT, SEGMENT_READY, WRITING;
     }
 
+    /**
+     * Checks message integrity. ~3x faster than MD5 checksum.
+     */
     private final Checksum writeDigest = new CRC32();
     private static final int CHECKSUM_BYTES = 4;
     private static final int LENGTH_BYTES = 4;
@@ -254,11 +257,16 @@ public class Store extends Completable {
         writeState = WriteState.CREATING_SEGMENT;
         long pos = writePosition;
         io.scheduleDirect(() -> {
-            Segment segment = createSegment(pos);
-            queue.offer(new SegmentCreated(segment, segmentSize));
-            // retry with add event
-            queue.offer(event);
-            drain();
+            try {
+                Segment segment = createSegment(pos);
+                SegmentCreated segmentCreated = new SegmentCreated(segment, segmentSize);
+                queue.offer(segmentCreated);
+                // retry with add event
+                queue.offer(event);
+                drain();
+            } catch (Throwable e) {
+                emitError(e);
+            }
         });
     }
 
@@ -285,7 +293,7 @@ public class Store extends Completable {
                     throw new IORuntimeException(e);
                 }
             }
-            writeState = WriteState.SEGMENT_FULL;
+            markSegmentFull();
             queue.offer(event);
         } else {
             boolean firstPart = this.isFirstPart;
@@ -310,17 +318,26 @@ public class Store extends Completable {
                         headerBytes = 0;
                     }
                     int bbLength = event.bb.remaining();
+                    long available = segmentSize - pos - headerBytes;
+                    int n = (int) Math.min(Integer.MAX_VALUE, Math.min(available, bbLength));
+                    assert n>0;
                     assert event.bb.hasArray();
-                    System.out.println("writing '" + new String(event.bb.array(),
-                            event.bb.arrayOffset() + event.bb.position(), event.bb.remaining()) + "'");
-                    f.write(event.bb.array(), event.bb.arrayOffset() + event.bb.position(), event.bb.remaining());
+                    f.write(event.bb.array(), //
+                            event.bb.arrayOffset() + event.bb.position(), //
+                            n);
+
                     // watch out because update(ByteBuffer) changes position
-                    writeDigest.update(event.bb.array(), event.bb.arrayOffset() + event.bb.position(),
-                            event.bb.remaining());
-                    long nextWritePosition = segment.start + pos + bbLength + headerBytes;
+                    writeDigest.update(event.bb.array(), event.bb.arrayOffset() + event.bb.position(), n);
+                    long nextWritePosition = segment.start + pos + n + headerBytes;
                     System.out.println("nextWritePosition = " + nextWritePosition);
                     queue.offer(new PartWritten(nextWritePosition));
-                    requestOneMore();
+                    if (n == bbLength) {
+                        requestOneMore();
+                    } else {
+                        System.out.println("n = "+ n);
+                        event.bb.position(event.bb.position() + n);
+                        queue.offer(event);
+                    }
                 } catch (Throwable e) {
                     emitError(e);
                 }
@@ -357,14 +374,7 @@ public class Store extends Completable {
                     throw new IORuntimeException(e);
                 }
             }
-            writeState = WriteState.SEGMENT_FULL;
-            try {
-                if (writeFile != writeFileStart) {
-                    writeFile.close();
-                }
-            } catch (IOException e) {
-                throw new IORuntimeException(e);
-            }
+            markSegmentFull();
             queue.offer(event);
         } else {
             boolean firstPart = this.isFirstPart;
@@ -410,6 +420,18 @@ public class Store extends Completable {
                 }
                 drain();
             });
+        }
+    }
+
+    private void markSegmentFull() {
+        writeState = WriteState.SEGMENT_FULL;
+        try {
+            if (writeFile != writeFileStart) {
+                writeFile.close();
+                System.out.println("closed "+ writeFile);
+            }
+        } catch (IOException e) {
+            throw new IORuntimeException(e);
         }
     }
 
