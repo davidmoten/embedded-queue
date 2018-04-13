@@ -11,13 +11,13 @@ import java.util.LinkedList;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
-import org.davidmoten.eq2.event.AddSegment;
+import org.davidmoten.eq2.event.SegmentCreated;
 import org.davidmoten.eq2.event.EndMessage;
 import org.davidmoten.eq2.event.EndWritten;
 import org.davidmoten.eq2.event.Event;
 import org.davidmoten.eq2.event.MessagePart;
 import org.davidmoten.eq2.event.Part;
-import org.davidmoten.eq2.event.Written;
+import org.davidmoten.eq2.event.PartWritten;
 import org.reactivestreams.Subscriber;
 import org.reactivestreams.Subscription;
 
@@ -169,10 +169,10 @@ public class Store extends Completable implements Subscription {
         System.out.println(event);
         if (event instanceof MessagePart) {
             processEventMessagePart((MessagePart) event);
-        } else if (event instanceof AddSegment) {
-            processEventAddSegment((AddSegment) event);
-        } else if (event instanceof Written) {
-            processEventWritten((Written) event);
+        } else if (event instanceof SegmentCreated) {
+            processEventSegmentCreated((SegmentCreated) event);
+        } else if (event instanceof PartWritten) {
+            processEventWritten((PartWritten) event);
         } else if (event instanceof EndMessage) {
             processEventEndMessage((EndMessage) event);
         } else if (event instanceof EndWritten) {
@@ -182,7 +182,7 @@ public class Store extends Completable implements Subscription {
         }
     }
 
-    private void processEventAddSegment(AddSegment event) {
+    private void processEventSegmentCreated(SegmentCreated event) {
         segments.add(event.segment);
         writeState = WriteState.SEGMENT_READY;
         writeFile = event.file;
@@ -211,7 +211,7 @@ public class Store extends Completable implements Subscription {
         writePosition = p;
     }
 
-    private void processEventWritten(Written event) {
+    private void processEventWritten(PartWritten event) {
         writeState = WriteState.SEGMENT_READY;
         setWritePosition(event.writePosition);
     }
@@ -221,7 +221,7 @@ public class Store extends Completable implements Subscription {
         long pos = writePosition;
         io.scheduleDirect(() -> {
             Segment segment = createSegment(pos);
-            queue.offer(new AddSegment(segment, segmentSize));
+            queue.offer(new SegmentCreated(segment, segmentSize));
             // retry with add event
             queue.offer(event);
             drain();
@@ -284,7 +284,7 @@ public class Store extends Completable implements Subscription {
                     writeDigest.update(event.bb);
                     long nextWritePosition = segment.start + pos + bbLength + headerBytes;
                     System.out.println("nextWritePosition = " + nextWritePosition);
-                    queue.offer(new Written(nextWritePosition));
+                    queue.offer(new PartWritten(nextWritePosition));
                     requestOneMore();
                 } catch (Throwable e) {
                     emitError(e);

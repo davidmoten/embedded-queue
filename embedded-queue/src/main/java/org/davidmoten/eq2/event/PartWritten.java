@@ -1,9 +1,9 @@
 package org.davidmoten.eq2.event;
 
-public class Written implements Event {
+public class PartWritten implements Event {
     public final long writePosition;
 
-    public Written(long writePosition) {
+    public PartWritten(long writePosition) {
         this.writePosition = writePosition;
     }
 }

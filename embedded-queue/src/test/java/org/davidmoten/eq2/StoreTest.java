@@ -1,6 +1,7 @@
 package org.davidmoten.eq2;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
 import java.io.ByteArrayOutputStream;
@@ -21,6 +22,7 @@ import java.util.stream.Collectors;
 import org.junit.Test;
 
 import io.reactivex.Completable;
+import io.reactivex.Flowable;
 import io.reactivex.schedulers.Schedulers;
 
 public class StoreTest {
@@ -48,14 +50,13 @@ public class StoreTest {
         File directory = new File("target/" + System.currentTimeMillis() + "_" + (counter++));
         directory.mkdirs();
         Store store = new Store(directory, segmentSize, Schedulers.trampoline());
-        Completable added = store.add(MSG).andThen(store.add(MSG2));
-        added.test().assertComplete();
+        assertNull(store.add(MSG).blockingGet());
+        assertNull(store.add(MSG2).blockingGet());
         print(store);
         assertEquals(Arrays.asList("hello", "worldiness"), msgs(store));
     }
 
-    private static void testWriteOneMessage(int segmentSize)
-            throws IOException, NoSuchAlgorithmException {
+    private static void testWriteOneMessage(int segmentSize) throws IOException, NoSuchAlgorithmException {
         File directory = new File("target/" + System.currentTimeMillis() + "_" + (counter++));
         directory.mkdirs();
         Store store = new Store(directory, segmentSize, Schedulers.trampoline());
