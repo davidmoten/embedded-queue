@@ -12,7 +12,7 @@ import java.util.zip.CRC32;
 import java.util.zip.Checksum;
 
 import org.davidmoten.eq.internal.Segment;
-import org.davidmoten.eq.internal.event.EndMessage;
+import org.davidmoten.eq.internal.event.MessageEnd;
 import org.davidmoten.eq.internal.event.EndWritten;
 import org.davidmoten.eq.internal.event.Event;
 import org.davidmoten.eq.internal.event.MessagePart;
@@ -124,7 +124,7 @@ public class Store extends Completable {
     public Completable add(Flowable<ByteBuffer> byteBuffers) {
         this.source = byteBuffers //
                 .map(x -> (Part) new MessagePart(x)) //
-                .concatWith(Flowable.just(EndMessage.instance()));
+                .concatWith(Flowable.just(MessageEnd.instance()));
         return this;
     }
 
@@ -210,8 +210,8 @@ public class Store extends Completable {
             processEventSegmentCreated((SegmentCreated) event);
         } else if (event instanceof PartWritten) {
             processEventWritten((PartWritten) event);
-        } else if (event instanceof EndMessage) {
-            processEventEndMessage((EndMessage) event);
+        } else if (event instanceof MessageEnd) {
+            processEventEndMessage((MessageEnd) event);
         } else if (event instanceof EndWritten) {
             processEventEndWritten((EndWritten) event);
         } else {
@@ -271,7 +271,7 @@ public class Store extends Completable {
         });
     }
 
-    private void processEventEndMessage(EndMessage event) {
+    private void processEventEndMessage(MessageEnd event) {
         System.out.println(writeState);
         if (writeState == WriteState.SEGMENT_FULL) {
             createSegment(event);
@@ -360,7 +360,7 @@ public class Store extends Completable {
         child.onComplete();
     }
 
-    private void writeEndMessage(EndMessage event, Segment segment) {
+    private void writeEndMessage(MessageEnd event, Segment segment) {
         long pos = writePosition - segment.start;
         System.out.println("end pos=" + pos + ", wp=" + writePosition + ", mstartpos=" + messageStartPosition
                 + ", segment=" + segment.file.getName());
