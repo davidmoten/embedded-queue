@@ -4,18 +4,14 @@ import java.nio.ByteBuffer;
 import java.util.zip.CRC32;
 import java.util.zip.Checksum;
 
+import org.davidmoten.eq.internal.Segment;
 import org.davidmoten.eq.internal.event.Event;
-import org.davidmoten.eq.internal.event.MessageEnd;
 import org.davidmoten.eq.internal.event.MessagePart;
 import org.davidmoten.eq.internal.event.SegmentFull;
 
 import io.reactivex.Scheduler;
 
-public abstract class StoreCore {
-
-    abstract long writePositionGlobal();
-
-    abstract long segmentStartPositionGlobal();
+public abstract class AbstractStore {
 
     abstract int segmentSize();
 
@@ -25,11 +21,9 @@ public abstract class StoreCore {
 
     abstract void write(int positionLocal, ByteBuffer bb, int length);
 
-    abstract long messageStartPositionGlobal();
+    abstract void writeInt(Segment segment, int positionLocal, int value);
 
     abstract void send(Event event);
-
-    abstract void send(Event event1, Event event2);
 
     abstract void drain();
 
@@ -39,17 +33,40 @@ public abstract class StoreCore {
 
     abstract Scheduler scheduler();
 
-    enum State implements Event {
+    public enum State implements Event {
         FIRST_PART, WRITTEN_LENGTH, WRITTEN_PADDING, WRITTEN_CONTENT, WRITTEN_CHECKSUM;
     }
 
+    abstract Info info();
+
+    public final static class Info {
+
+        public final long writePositionGlobal;
+        public final Segment messageStartSegment;
+        public int messageStartPositionLocal;
+        public final boolean isFirstPart;
+        public final State state;
+
+        public Info(long writePositionGlobal, Segment messageStartSegment, int messageStartPositionLocal,
+                 boolean isFirstPart, State state) {
+            this.writePositionGlobal = writePositionGlobal;
+            this.messageStartSegment = messageStartSegment;
+            this.messageStartPositionLocal = messageStartPositionLocal;
+            this.isFirstPart = isFirstPart;
+            this.state = state;
+        }
+    }
+
     private final Checksum checksum = new CRC32();
+    private int contentLength;
     private static final int CHECKSUM_BYTES = 4;
 
     public final void handleMessagePart(MessagePart event) {
-        final int entryPositionLocal = (int) (writePositionGlobal() - segmentStartPositionGlobal());
+        Info info = info();
+        final int entryPositionLocal = (int) (info.writePositionGlobal
+                - info.messageStartPositionLocal);
         if (entryPositionLocal == segmentSize()) {
-            send(new SegmentFull(event));
+            send(new SegmentFull(event, info));
         } else {
             State entryState = state();
             scheduler().scheduleDirect(() -> {
@@ -57,7 +74,7 @@ public abstract class StoreCore {
                 int positionLocal = entryPositionLocal;
                 while (true) {
                     if (positionLocal == segmentSize()) {
-                        send(new SegmentFull(event));
+                        send(new SegmentFull(event, info));
                         break;
                     }
                     if (state == State.FIRST_PART) {
@@ -69,6 +86,7 @@ public abstract class StoreCore {
                         writeInt(positionLocal, event.bb.remaining());
                         positionLocal += event.bb.remaining();
                         checksum.reset();
+                        contentLength = 0;
                         state = State.WRITTEN_LENGTH;
                     } else if (state == State.WRITTEN_LENGTH) {
                         /////////////////////////////
@@ -84,24 +102,17 @@ public abstract class StoreCore {
                         state = State.WRITTEN_PADDING;
                     } else if (state == State.WRITTEN_PADDING) {
                         /////////////////////////////
-                        // write content
+                        // write content (or continue writing content)
                         /////////////////////////////
                         int bytesToWrite = Math.min(segmentSize() - positionLocal,
                                 event.bb.remaining());
                         write(positionLocal, event.bb, bytesToWrite);
-                        if (event.bb.hasArray()) {
-                            checksum.update(event.bb.array(),
-                                    event.bb.arrayOffset() + event.bb.position(),
-                                    event.bb.remaining());
-                        }
+                        updateChecksum(checksum, event.bb, bytesToWrite);
                         if (bytesToWrite == event.bb.remaining()) {
                             state = State.WRITTEN_CONTENT;
                         } else {
                             // alter the bb
                             event.bb.position(event.bb.position() + bytesToWrite);
-                            // TODO send new position
-                            send(new SegmentFull(event));
-                            break;
                         }
                     } else if (state == State.WRITTEN_CONTENT) {
                         /////////////////////////////
@@ -110,10 +121,25 @@ public abstract class StoreCore {
                         writeInt(positionLocal, (int) checksum.getValue());
                         positionLocal += CHECKSUM_BYTES;
                         state = State.WRITTEN_CHECKSUM;
-                        break;
+                        writeInt(info.messageStartSegment, info.messageStartPositionLocal, contentLength);
                     }
                 }
             });
+        }
+    }
+
+    private static void updateChecksum(Checksum checksum, ByteBuffer bb, int bytesToWrite) {
+        if (bb.hasArray()) {
+            checksum.update(bb.array(),
+                    bb.arrayOffset() + bb.position(),
+                    bb.remaining());
+        } else {
+            int p = bb.position();
+            for (int i = 0; i < bytesToWrite; i++) {
+                checksum.update(bb.get());
+            }
+            // revert the position changed by calling bb.get()
+            bb.position(p);
         }
     }
 
