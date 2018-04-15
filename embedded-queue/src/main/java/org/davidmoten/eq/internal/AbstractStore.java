@@ -1,4 +1,4 @@
-package org.davidmoten.eq;
+package org.davidmoten.eq.internal;
 
 import java.nio.ByteBuffer;
 import java.util.zip.CRC32;
@@ -32,10 +32,6 @@ public abstract class AbstractStore {
 
     // avoid two drains by offering this method
     abstract void send(Event event1, Event event2);
-
-    abstract boolean isFirstPart();
-
-    abstract State state();
 
     abstract Scheduler scheduler();
 
@@ -73,7 +69,7 @@ public abstract class AbstractStore {
         if (entryPositionLocal == segmentSize()) {
             send(new SegmentFull(event));
         } else {
-            State entryState = state();
+            State entryState = this.state;
             scheduler().scheduleDirect(() -> {
                 try {
                     State state = entryState;
