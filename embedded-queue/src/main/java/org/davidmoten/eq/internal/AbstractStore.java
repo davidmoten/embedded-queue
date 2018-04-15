@@ -52,6 +52,8 @@ public abstract class AbstractStore {
 
     private static final int CHECKSUM_BYTES = 4;
 
+    private static final int LENGTH_BYTES = 4;
+
     public final void handleSegmentFull(SegmentFull event) {
         scheduler().scheduleDirect(() -> {
             Segment segment = createSegment(writePositionGlobal);
@@ -91,7 +93,7 @@ public abstract class AbstractStore {
                             writeInt(positionLocal, 0);
                             messageStartSegment = writeSegment();
                             messageStartPositionLocal = positionLocal;
-                            positionLocal += event.bb.remaining();
+                            positionLocal += LENGTH_BYTES;
                             checksum.reset();
                             contentLength = 0;
                             state = State.WRITTEN_LENGTH;
@@ -104,7 +106,7 @@ public abstract class AbstractStore {
                             for (int i = 1; i <= paddingBytes; i++) {
                                 writeByte(positionLocal + i, 0);
                             }
-                            positionLocal += paddingBytes;
+                            positionLocal += paddingBytes + 1;
                             state = State.WRITTEN_PADDING;
                         } else if (state == State.WRITTEN_PADDING) {
                             /////////////////////////////
@@ -114,6 +116,8 @@ public abstract class AbstractStore {
                                     event.bb.remaining());
                             write(positionLocal, event.bb, bytesToWrite);
                             updateChecksum(checksum, event.bb, bytesToWrite);
+                            positionLocal += bytesToWrite;
+                            contentLength += bytesToWrite;
                             if (bytesToWrite == event.bb.remaining()) {
                                 state = State.WRITTEN_CONTENT;
                             } else {
@@ -125,6 +129,11 @@ public abstract class AbstractStore {
                             // write checksum
                             /////////////////////////////
                             writeInt(positionLocal, (int) checksum.getValue());
+                            // ensure the length field of the next item is set to zero
+                            // if is end of segment then don't need to do it
+                            if (positionLocal < segmentSize()) {
+                                writeInt(positionLocal + CHECKSUM_BYTES, 0);
+                            }
                             positionLocal += CHECKSUM_BYTES;
                             writeInt(messageStartSegment, messageStartPositionLocal, contentLength);
                             state = State.FIRST_PART;
