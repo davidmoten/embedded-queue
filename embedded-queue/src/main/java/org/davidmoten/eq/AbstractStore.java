@@ -35,7 +35,7 @@ public abstract class AbstractStore {
 
     abstract Scheduler scheduler();
 
-    public enum State implements Event {
+    public enum State {
         FIRST_PART, WRITTEN_LENGTH, WRITTEN_PADDING, WRITTEN_CONTENT, FULL_SEGMENT;
     }
 
@@ -71,8 +71,7 @@ public abstract class AbstractStore {
                             // due to the use of padding if the segment is not full then there is at
                             // least 4 bytes available
                             // write 0 in the length field till writing finished and we will come
-                            ///////////////////////////// back
-                            // and overwrite it with content length
+                            // back and overwrite it with content length
                             writeInt(positionLocal, 0);
                             messageStartSegment = writeSegment();
                             messageStartPositionLocal = positionLocal;
