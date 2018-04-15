@@ -15,6 +15,8 @@ public abstract class AbstractStore {
 
     abstract int segmentSize();
 
+    abstract Segment writeSegment();
+
     abstract void writeInt(int positionLocal, int value);
 
     abstract void writeByte(int positionLocal, int value);
@@ -34,105 +36,97 @@ public abstract class AbstractStore {
     abstract Scheduler scheduler();
 
     public enum State implements Event {
-        FIRST_PART, WRITTEN_LENGTH, WRITTEN_PADDING, WRITTEN_CONTENT, WRITTEN_CHECKSUM;
-    }
-
-    abstract Info info();
-
-    public final static class Info {
-
-        public final long writePositionGlobal;
-        public final Segment messageStartSegment;
-        public int messageStartPositionLocal;
-        public final boolean isFirstPart;
-        public final State state;
-
-        public Info(long writePositionGlobal, Segment messageStartSegment, int messageStartPositionLocal,
-                 boolean isFirstPart, State state) {
-            this.writePositionGlobal = writePositionGlobal;
-            this.messageStartSegment = messageStartSegment;
-            this.messageStartPositionLocal = messageStartPositionLocal;
-            this.isFirstPart = isFirstPart;
-            this.state = state;
-        }
+        FIRST_PART, WRITTEN_LENGTH, WRITTEN_PADDING, WRITTEN_CONTENT, FULL_SEGMENT;
     }
 
     private final Checksum checksum = new CRC32();
-    private int contentLength;
+    int contentLength;
+    long writePositionGlobal;
+    Segment messageStartSegment;
+    int messageStartPositionLocal;
+    boolean isFirstPart;
+    State state = State.FULL_SEGMENT;
+
     private static final int CHECKSUM_BYTES = 4;
 
     public final void handleMessagePart(MessagePart event) {
-        Info info = info();
-        final int entryPositionLocal = (int) (info.writePositionGlobal
-                - info.messageStartPositionLocal);
+        final int entryPositionLocal = (int) (writePositionGlobal - messageStartPositionLocal);
         if (entryPositionLocal == segmentSize()) {
-            send(new SegmentFull(event, info));
+            send(new SegmentFull(event));
         } else {
             State entryState = state();
             scheduler().scheduleDirect(() -> {
-                State state = entryState;
-                int positionLocal = entryPositionLocal;
-                while (true) {
-                    if (positionLocal == segmentSize()) {
-                        send(new SegmentFull(event, info));
-                        break;
-                    }
-                    if (state == State.FIRST_PART) {
-                        /////////////////////////////
-                        // write length
-                        /////////////////////////////
-                        // due to the use of padding if the segment is not full then there is at
-                        // least 4 bytes available
-                        writeInt(positionLocal, event.bb.remaining());
-                        positionLocal += event.bb.remaining();
-                        checksum.reset();
-                        contentLength = 0;
-                        state = State.WRITTEN_LENGTH;
-                    } else if (state == State.WRITTEN_LENGTH) {
-                        /////////////////////////////
-                        // write padding
-                        /////////////////////////////
-                        // pad
-                        int paddingBytes = 3 - event.bb.remaining() % 4;
-                        writeByte(positionLocal, paddingBytes);
-                        for (int i = 1; i <= paddingBytes; i++) {
-                            writeByte(positionLocal + i, 0);
+                try {
+                    State state = entryState;
+                    int positionLocal = entryPositionLocal;
+                    while (true) {
+                        if (positionLocal == segmentSize()) {
+                            send(new SegmentFull(event));
+                            break;
                         }
-                        positionLocal += paddingBytes;
-                        state = State.WRITTEN_PADDING;
-                    } else if (state == State.WRITTEN_PADDING) {
-                        /////////////////////////////
-                        // write content (or continue writing content)
-                        /////////////////////////////
-                        int bytesToWrite = Math.min(segmentSize() - positionLocal,
-                                event.bb.remaining());
-                        write(positionLocal, event.bb, bytesToWrite);
-                        updateChecksum(checksum, event.bb, bytesToWrite);
-                        if (bytesToWrite == event.bb.remaining()) {
-                            state = State.WRITTEN_CONTENT;
-                        } else {
-                            // alter the bb
-                            event.bb.position(event.bb.position() + bytesToWrite);
+                        if (state == State.FIRST_PART) {
+                            /////////////////////////////
+                            // write length
+                            /////////////////////////////
+                            // due to the use of padding if the segment is not full then there is at
+                            // least 4 bytes available
+                            // write 0 in the length field till writing finished and we will come
+                            ///////////////////////////// back
+                            // and overwrite it with content length
+                            writeInt(positionLocal, 0);
+                            messageStartSegment = writeSegment();
+                            messageStartPositionLocal = positionLocal;
+                            positionLocal += event.bb.remaining();
+                            checksum.reset();
+                            contentLength = 0;
+                            state = State.WRITTEN_LENGTH;
+                        } else if (state == State.WRITTEN_LENGTH) {
+                            /////////////////////////////
+                            // write padding
+                            /////////////////////////////
+                            int paddingBytes = 3 - event.bb.remaining() % 4;
+                            writeByte(positionLocal, paddingBytes);
+                            for (int i = 1; i <= paddingBytes; i++) {
+                                writeByte(positionLocal + i, 0);
+                            }
+                            positionLocal += paddingBytes;
+                            state = State.WRITTEN_PADDING;
+                        } else if (state == State.WRITTEN_PADDING) {
+                            /////////////////////////////
+                            // write content (or continue writing content)
+                            /////////////////////////////
+                            int bytesToWrite = Math.min(segmentSize() - positionLocal,
+                                    event.bb.remaining());
+                            write(positionLocal, event.bb, bytesToWrite);
+                            updateChecksum(checksum, event.bb, bytesToWrite);
+                            if (bytesToWrite == event.bb.remaining()) {
+                                state = State.WRITTEN_CONTENT;
+                            } else {
+                                // alter the bb
+                                event.bb.position(event.bb.position() + bytesToWrite);
+                            }
+                        } else if (state == State.WRITTEN_CONTENT) {
+                            /////////////////////////////
+                            // write checksum
+                            /////////////////////////////
+                            writeInt(positionLocal, (int) checksum.getValue());
+                            positionLocal += CHECKSUM_BYTES;
+                            writeInt(messageStartSegment, messageStartPositionLocal, contentLength);
+                            state = State.FIRST_PART;
+                            break;
                         }
-                    } else if (state == State.WRITTEN_CONTENT) {
-                        /////////////////////////////
-                        // write checksum
-                        /////////////////////////////
-                        writeInt(positionLocal, (int) checksum.getValue());
-                        positionLocal += CHECKSUM_BYTES;
-                        state = State.WRITTEN_CHECKSUM;
-                        writeInt(info.messageStartSegment, info.messageStartPositionLocal, contentLength);
                     }
+                } catch (Throwable e) {
+                    e.printStackTrace();
                 }
             });
         }
+
     }
 
     private static void updateChecksum(Checksum checksum, ByteBuffer bb, int bytesToWrite) {
         if (bb.hasArray()) {
-            checksum.update(bb.array(),
-                    bb.arrayOffset() + bb.position(),
-                    bb.remaining());
+            checksum.update(bb.array(), bb.arrayOffset() + bb.position(), bb.remaining());
         } else {
             int p = bb.position();
             for (int i = 0; i < bytesToWrite; i++) {
