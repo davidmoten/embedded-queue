@@ -3,6 +3,7 @@ package org.davidmoten.eq.internal;
 import java.io.File;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 
 import org.davidmoten.eq.internal.AbstractStore.State;
@@ -38,7 +39,15 @@ public class AbstractStoreTest {
         @Override
         public String toString() {
             return "Record [segment=" + segment + ", positionLocal=" + positionLocal + ", object="
-                    + object + "]";
+                    + toString(object) + "]";
+        }
+
+        private static String toString(Object o) {
+            if (o.getClass().isArray()) {
+                return Arrays.toString((byte[]) o);
+            } else {
+                return String.valueOf(o);
+            }
         }
     }
 
