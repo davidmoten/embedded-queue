@@ -11,6 +11,7 @@ import java.util.zip.Checksum;
 import org.davidmoten.eq.internal.AbstractStore.State;
 import org.davidmoten.eq.internal.event.Event;
 import org.davidmoten.eq.internal.event.MessagePart;
+import org.davidmoten.eq.internal.event.SegmentFull;
 import org.junit.Test;
 
 import com.github.davidmoten.guavamini.Lists;
@@ -34,7 +35,7 @@ public class AbstractStoreTest {
                 create(segment, 4, 1), // padding length 1
                 create(segment, 5, 0), // padding
                 create(segment, 6, msg), //
-                create(segment, 8, (int) c.getValue()), //
+                create(segment, 8, (int) c.getValue()), // checksum
                 create(segment, 12, 0), // write length of next value
                 create(segment, 0, 2)); // write length of current value
     }
@@ -57,8 +58,8 @@ public class AbstractStoreTest {
 
         @Override
         public String toString() {
-            return "Record [segment=" + segment + ", positionLocal=" + positionLocal + ", object="
-                    + toString(object) + "]";
+            return "Record [segment=" + segment + ", positionLocal=" + positionLocal + ", object<"
+                    + object.getClass().getSimpleName() + ">=" + toString(object) + "]";
         }
 
         @Override
@@ -123,7 +124,7 @@ public class AbstractStoreTest {
 
     private static final class MyStore extends AbstractStore {
 
-        Segment segment = new Segment(new File("target/t"), 0);
+        Segment segment = new Segment(new File("target/s1"), 0);
         List<Record> records = new ArrayList<>();
 
         @Override
@@ -162,7 +163,11 @@ public class AbstractStoreTest {
 
         @Override
         void send(Event event) {
-
+            if (event instanceof SegmentFull) {
+                segment = new Segment(new File("target/s2"), segment.start + segmentSize());
+            } else if ( event instanceof MessagePart) {
+                handleMessagePart((MessagePart) event);
+            }
         }
 
         @Override
