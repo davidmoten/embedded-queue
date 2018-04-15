@@ -7,6 +7,7 @@ import java.util.zip.Checksum;
 import org.davidmoten.eq.internal.Segment;
 import org.davidmoten.eq.internal.event.Event;
 import org.davidmoten.eq.internal.event.MessagePart;
+import org.davidmoten.eq.internal.event.SegmentCreated;
 import org.davidmoten.eq.internal.event.SegmentFull;
 
 import io.reactivex.Scheduler;
@@ -27,7 +28,8 @@ public abstract class AbstractStore {
 
     abstract void send(Event event);
 
-    abstract void drain();
+    // avoid two drains by offering this method
+    abstract void send(Event event1, Event event2);
 
     abstract boolean isFirstPart();
 
@@ -35,19 +37,35 @@ public abstract class AbstractStore {
 
     abstract Scheduler scheduler();
 
+    abstract Segment createSegment(long positionGlobal);
+
     public enum State {
         FIRST_PART, WRITTEN_LENGTH, WRITTEN_PADDING, WRITTEN_CONTENT, FULL_SEGMENT;
     }
 
     private final Checksum checksum = new CRC32();
+
     int contentLength;
     long writePositionGlobal;
     Segment messageStartSegment;
     int messageStartPositionLocal;
     boolean isFirstPart;
+
     State state = State.FULL_SEGMENT;
 
     private static final int CHECKSUM_BYTES = 4;
+
+    public final void handleSegmentFull(SegmentFull event) {
+        scheduler().scheduleDirect(() -> {
+            Segment segment = createSegment(writePositionGlobal);
+            SegmentCreated event1 = new SegmentCreated(segment, segmentSize());
+            if (event.messagePart == null) {
+                send(event1);
+            } else {
+                send(event1, event.messagePart);
+            }
+        });
+    }
 
     public final void handleMessagePart(MessagePart event) {
         final int entryPositionLocal = (int) (writePositionGlobal - messageStartPositionLocal);
@@ -59,9 +77,10 @@ public abstract class AbstractStore {
                 try {
                     State state = entryState;
                     int positionLocal = entryPositionLocal;
+                    Event sendEvent = null;
                     while (true) {
                         if (positionLocal == segmentSize()) {
-                            send(new SegmentFull(event));
+                            sendEvent = new SegmentFull(event);
                             break;
                         }
                         if (state == State.FIRST_PART) {
@@ -115,12 +134,14 @@ public abstract class AbstractStore {
                             break;
                         }
                     }
+                    if (sendEvent != null) {
+                        send(new SegmentFull(event));
+                    }
                 } catch (Throwable e) {
                     e.printStackTrace();
                 }
             });
         }
-
     }
 
     private static void updateChecksum(Checksum checksum, ByteBuffer bb, int bytesToWrite) {
