@@ -1,5 +1,7 @@
 package org.davidmoten.eq.internal;
 
+import static org.junit.Assert.assertEquals;
+
 import java.io.File;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
@@ -13,8 +15,6 @@ import org.davidmoten.eq.internal.event.Event;
 import org.davidmoten.eq.internal.event.MessagePart;
 import org.davidmoten.eq.internal.event.SegmentFull;
 import org.junit.Test;
-
-import com.github.davidmoten.guavamini.Lists;
 
 import io.reactivex.Scheduler;
 import io.reactivex.schedulers.Schedulers;
@@ -31,13 +31,15 @@ public class AbstractStoreTest {
         Checksum c = new CRC32();
         c.update(msg, 0, msg.length);
         Segment segment = store.segment;
-        List<Record> x = Lists.newArrayList(create(segment, 0, 0), // length 0
-                create(segment, 4, 1), // padding length 1
-                create(segment, 5, 0), // padding
-                create(segment, 6, msg), //
-                create(segment, 8, (int) c.getValue()), // checksum
-                create(segment, 12, 0), // write length of next value
-                create(segment, 0, 2)); // write length of current value
+        List<Record> r = store.records;
+        assertEquals(create(segment, 0, 0), r.get(0));
+        assertEquals(create(segment, 4, (byte) 1), r.get(1));
+        assertEquals(create(segment, 5, (byte) 0), r.get(2));
+        assertEquals(create(segment, 6, msg), r.get(3));
+        assertEquals(create(segment, 8, (int) c.getValue()), r.get(4));
+        assertEquals(create(segment, 12, 0), r.get(5));
+        assertEquals(create(segment, 0, 2), r.get(6));
+        assertEquals(7, r.size());
     }
 
     private static Record create(Segment segment, int positionLocal, Object o) {
@@ -113,7 +115,6 @@ public class AbstractStoreTest {
         }
 
         private static String toString(Object o) {
-            byte[] b;
             if (o.getClass().isArray()) {
                 return Arrays.toString((byte[]) o);
             } else {
@@ -172,7 +173,8 @@ public class AbstractStoreTest {
 
         @Override
         void send(Event event1, Event event2) {
-
+            send(event1);
+            send(event2);
         }
 
         @Override
