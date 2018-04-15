@@ -77,7 +77,6 @@ public abstract class AbstractStore {
                     Event sendEvent = null;
                     while (true) {
                         if (positionLocal == segmentSize()) {
-                            writePositionGlobal = positionLocal - entryPositionLocal;
                             sendEvent = new SegmentFull(event);
                             break;
                         }
@@ -132,6 +131,8 @@ public abstract class AbstractStore {
                             break;
                         }
                     }
+                    writePositionGlobal = positionLocal - entryPositionLocal;
+                    this.state = state;
                     if (sendEvent != null) {
                         send(new SegmentFull(event));
                     }
