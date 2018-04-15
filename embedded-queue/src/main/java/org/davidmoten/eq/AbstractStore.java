@@ -10,6 +10,8 @@ import org.davidmoten.eq.internal.event.MessagePart;
 import org.davidmoten.eq.internal.event.SegmentCreated;
 import org.davidmoten.eq.internal.event.SegmentFull;
 
+import com.github.davidmoten.guavamini.annotations.VisibleForTesting;
+
 import io.reactivex.Scheduler;
 
 public abstract class AbstractStore {
@@ -49,7 +51,6 @@ public abstract class AbstractStore {
     long writePositionGlobal;
     Segment messageStartSegment;
     int messageStartPositionLocal;
-    boolean isFirstPart;
 
     State state = State.FULL_SEGMENT;
 
@@ -80,6 +81,7 @@ public abstract class AbstractStore {
                     Event sendEvent = null;
                     while (true) {
                         if (positionLocal == segmentSize()) {
+                            writePositionGlobal = positionLocal - entryPositionLocal;
                             sendEvent = new SegmentFull(event);
                             break;
                         }
@@ -144,7 +146,9 @@ public abstract class AbstractStore {
         }
     }
 
-    private static void updateChecksum(Checksum checksum, ByteBuffer bb, int bytesToWrite) {
+    // TODO test
+    @VisibleForTesting
+    static void updateChecksum(Checksum checksum, ByteBuffer bb, int bytesToWrite) {
         if (bb.hasArray()) {
             checksum.update(bb.array(), bb.arrayOffset() + bb.position(), bb.remaining());
         } else {
