@@ -28,20 +28,23 @@ public class AbstractStoreTest {
         MyStore store = new MyStore();
         store.state = State.FIRST_PART;
         byte[] msg = "hi".getBytes();
+        int start = 4;
+        store.writePositionGlobal = start;
         store.handleMessagePart(new MessagePart(ByteBuffer.wrap(msg)));
         store.records.stream().forEach(System.out::println);
         Checksum c = new CRC32();
         c.update(msg, 0, msg.length);
         Segment segment = store.writeSegment();
         List<Record> r = store.records;
-        assertEquals(create(segment, 0, 0), r.get(0)); // write zero length
-        assertEquals(create(segment, 4, (byte) 1), r.get(1)); // write padding length
-        assertEquals(create(segment, 5, (byte) 0), r.get(2)); // write padding
-        assertEquals(create(segment, 6, msg), r.get(3)); // write msg
-        assertEquals(create(segment, 8, (int) c.getValue()), r.get(4)); // write checksum
-        assertEquals(create(segment, 12, 0), r.get(5)); // write length of next record as zero for
-                                                        // readers
-        assertEquals(create(segment, 0, 2), r.get(6)); // rewrite length of message, now ready for
+        assertEquals(create(segment, start + 0, 0), r.get(0)); // write zero length
+        assertEquals(create(segment, start + 4, (byte) 1), r.get(1)); // write padding length
+        assertEquals(create(segment, start + 5, (byte) 0), r.get(2)); // write padding
+        assertEquals(create(segment, start + 6, msg), r.get(3)); // write msg
+        assertEquals(create(segment, start + 8, (int) c.getValue()), r.get(4)); // write checksum
+        assertEquals(create(segment, start + 12, 0), r.get(5)); // write length of next record as
+                                                                // zero for
+        // readers
+        assertEquals(create(segment, start + 0, 2), r.get(6)); // rewrite length of message, now ready for
                                                        // readers
         assertEquals(7, r.size());
     }
