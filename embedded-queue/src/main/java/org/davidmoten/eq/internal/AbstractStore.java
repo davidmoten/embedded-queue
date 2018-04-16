@@ -55,15 +55,7 @@ public abstract class AbstractStore {
     private static final int LENGTH_BYTES = 4;
 
     public final void handleSegmentFull(SegmentFull event) {
-        scheduler().scheduleDirect(() -> {
-            Segment segment = createSegment(writePositionGlobal);
-            SegmentCreated event1 = new SegmentCreated(segment, segmentSize());
-            if (event.messagePart == null) {
-                send(event1);
-            } else {
-                send(event1, event.messagePart);
-            }
-        });
+        scheduler().scheduleDirect(new SegmentFullHandler(event) );
     }
 
     public final void handleMessagePart(MessagePart event) {
@@ -72,83 +64,119 @@ public abstract class AbstractStore {
             send(new SegmentFull(event));
         } else {
             State entryState = this.state;
-            scheduler().scheduleDirect(() -> {
-                try {
-                    State state = entryState;
-                    int positionLocal = entryPositionLocal;
-                    Event sendEvent = null;
-                    while (true) {
-                        if (positionLocal == segmentSize()) {
-                            sendEvent = new SegmentFull(event);
-                            break;
+            scheduler().scheduleDirect(new MessagePartHandler(event, entryPositionLocal, entryState));
+        }
+    }
+    
+    private final class SegmentFullHandler implements Runnable {
+
+        private final SegmentFull event;
+
+        SegmentFullHandler(SegmentFull event) {
+            this.event = event;
+        }
+
+        @Override
+        public void run() {
+            Segment segment = createSegment(writePositionGlobal);
+            SegmentCreated event1 = new SegmentCreated(segment, segmentSize());
+            if (event.messagePart == null) {
+                send(event1);
+            } else {
+                send(event1, event.messagePart);
+            }            
+        }
+        
+    }
+
+    private final class MessagePartHandler implements Runnable {
+
+        private final MessagePart event;
+        private final int entryPositionLocal;
+        private final State entryState;
+
+        MessagePartHandler(MessagePart event, int entryPositionLocal, State entryState) {
+            this.event = event;
+            this.entryPositionLocal = entryPositionLocal;
+            this.entryState = entryState;
+        }
+
+        @Override
+        public void run() {
+            try {
+                State state = entryState;
+                int positionLocal = entryPositionLocal;
+                Event sendEvent = null;
+                while (true) {
+                    if (positionLocal == segmentSize()) {
+                        sendEvent = new SegmentFull(event);
+                        break;
+                    }
+                    if (state == State.FIRST_PART) {
+                        /////////////////////////////
+                        // write length
+                        /////////////////////////////
+                        // due to the use of padding if the segment is not full then there is at
+                        // least 4 bytes available
+                        // write 0 in the length field till writing finished and we will come
+                        // back and overwrite it with content length
+                        writeInt(positionLocal, 0);
+                        messageStartSegment = writeSegment();
+                        messageStartPositionLocal = positionLocal;
+                        positionLocal += LENGTH_BYTES;
+                        checksum.reset();
+                        contentLength = 0;
+                        state = State.WRITTEN_LENGTH;
+                    } else if (state == State.WRITTEN_LENGTH) {
+                        /////////////////////////////
+                        // write padding
+                        /////////////////////////////
+                        int paddingBytes = 3 - event.bb.remaining() % 4;
+                        writeByte(positionLocal, paddingBytes);
+                        for (int i = 1; i <= paddingBytes; i++) {
+                            writeByte(positionLocal + i, 0);
                         }
-                        if (state == State.FIRST_PART) {
-                            /////////////////////////////
-                            // write length
-                            /////////////////////////////
-                            // due to the use of padding if the segment is not full then there is at
-                            // least 4 bytes available
-                            // write 0 in the length field till writing finished and we will come
-                            // back and overwrite it with content length
+                        positionLocal += paddingBytes + 1;
+                        state = State.WRITTEN_PADDING;
+                    } else if (state == State.WRITTEN_PADDING) {
+                        /////////////////////////////
+                        // write content (or continue writing content)
+                        /////////////////////////////
+                        int bytesToWrite = Math.min(segmentSize() - positionLocal, event.bb.remaining());
+                        write(positionLocal, event.bb, bytesToWrite);
+                        updateChecksum(checksum, event.bb, bytesToWrite);
+                        positionLocal += bytesToWrite;
+                        contentLength += bytesToWrite;
+                        if (bytesToWrite == event.bb.remaining()) {
+                            state = State.WRITTEN_CONTENT;
+                        } else {
+                            // alter the bb
+                            event.bb.position(event.bb.position() + bytesToWrite);
+                        }
+                    } else if (state == State.WRITTEN_CONTENT) {
+                        /////////////////////////////
+                        // write checksum
+                        /////////////////////////////
+                        writeInt(positionLocal, (int) checksum.getValue());
+                        positionLocal += CHECKSUM_BYTES;
+                        // ensure the length field of the next item is set to zero
+                        // if is end of segment then don't need to do it
+                        if (positionLocal < segmentSize()) {
                             writeInt(positionLocal, 0);
-                            messageStartSegment = writeSegment();
-                            messageStartPositionLocal = positionLocal;
-                            positionLocal += LENGTH_BYTES;
-                            checksum.reset();
-                            contentLength = 0;
-                            state = State.WRITTEN_LENGTH;
-                        } else if (state == State.WRITTEN_LENGTH) {
-                            /////////////////////////////
-                            // write padding
-                            /////////////////////////////
-                            int paddingBytes = 3 - event.bb.remaining() % 4;
-                            writeByte(positionLocal, paddingBytes);
-                            for (int i = 1; i <= paddingBytes; i++) {
-                                writeByte(positionLocal + i, 0);
-                            }
-                            positionLocal += paddingBytes + 1;
-                            state = State.WRITTEN_PADDING;
-                        } else if (state == State.WRITTEN_PADDING) {
-                            /////////////////////////////
-                            // write content (or continue writing content)
-                            /////////////////////////////
-                            int bytesToWrite = Math.min(segmentSize() - positionLocal,
-                                    event.bb.remaining());
-                            write(positionLocal, event.bb, bytesToWrite);
-                            updateChecksum(checksum, event.bb, bytesToWrite);
-                            positionLocal += bytesToWrite;
-                            contentLength += bytesToWrite;
-                            if (bytesToWrite == event.bb.remaining()) {
-                                state = State.WRITTEN_CONTENT;
-                            } else {
-                                // alter the bb
-                                event.bb.position(event.bb.position() + bytesToWrite);
-                            }
-                        } else if (state == State.WRITTEN_CONTENT) {
-                            /////////////////////////////
-                            // write checksum
-                            /////////////////////////////
-                            writeInt(positionLocal, (int) checksum.getValue());
-                            // ensure the length field of the next item is set to zero
-                            // if is end of segment then don't need to do it
-                            if (positionLocal < segmentSize()) {
-                                writeInt(positionLocal + CHECKSUM_BYTES, 0);
-                            }
-                            positionLocal += CHECKSUM_BYTES;
-                            writeInt(messageStartSegment, messageStartPositionLocal, contentLength);
-                            state = State.FIRST_PART;
-                            break;
                         }
+                        writeInt(messageStartSegment, messageStartPositionLocal, contentLength);
+                        state = State.FIRST_PART;
+                        break;
                     }
-                    writePositionGlobal = positionLocal - entryPositionLocal;
-                    this.state = state;
-                    if (sendEvent != null) {
-                        send(new SegmentFull(event));
-                    }
-                } catch (Throwable e) {
-                    e.printStackTrace();
                 }
-            });
+                writePositionGlobal = positionLocal - entryPositionLocal;
+                AbstractStore.this.state = state;
+                if (sendEvent != null) {
+                    send(new SegmentFull(event));
+                }
+            } catch (Throwable e) {
+                e.printStackTrace();
+            }
         }
     }
 

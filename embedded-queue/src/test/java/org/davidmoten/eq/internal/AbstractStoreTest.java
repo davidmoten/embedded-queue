@@ -17,6 +17,7 @@ import org.davidmoten.eq.internal.event.SegmentFull;
 import org.junit.Test;
 
 import com.github.davidmoten.guavamini.Lists;
+import com.github.davidmoten.guavamini.Preconditions;
 
 import io.reactivex.Scheduler;
 import io.reactivex.schedulers.Schedulers;
@@ -24,8 +25,8 @@ import io.reactivex.schedulers.Schedulers;
 public class AbstractStoreTest {
 
     @Test
-    public void testHandleMessagePart() {
-        MyStore store = new MyStore();
+    public void testHandleMessagePartUsePartSegment() {
+        MyStore store = new MyStore(100);
         store.state = State.FIRST_PART;
         byte[] msg = "hi".getBytes();
         int start = 4;
@@ -45,8 +46,32 @@ public class AbstractStoreTest {
                                                                 // zero for
         // readers
         assertEquals(create(segment, start + 0, 2), r.get(6)); // rewrite length of message, now ready for
-                                                       // readers
+        // readers
         assertEquals(7, r.size());
+    }
+
+    @Test
+    public void testHandleMessagePartUseWholeSegment() {
+        MyStore store = new MyStore(12);
+        store.state = State.FIRST_PART;
+        byte[] msg = "hi".getBytes();
+        store.handleMessagePart(new MessagePart(ByteBuffer.wrap(msg)));
+        store.records.stream().forEach(System.out::println);
+        Checksum c = new CRC32();
+        c.update(msg, 0, msg.length);
+        Segment segment = store.writeSegment();
+        List<Record> r = store.records;
+        assertEquals(create(segment, 0, 0), r.get(0)); // write zero length
+        assertEquals(create(segment, 4, (byte) 1), r.get(1)); // write padding length
+        assertEquals(create(segment, 5, (byte) 0), r.get(2)); // write padding
+        assertEquals(create(segment, 6, msg), r.get(3)); // write msg
+        assertEquals(create(segment, 8, (int) c.getValue()), r.get(4)); // write checksum
+        //don't write zero length for next record as is end of segment and we assume that each new segment 
+        // has a zeroed first 4 bytes
+        // readers
+        assertEquals(create(segment, 0, 2), r.get(5)); // rewrite length of message, now ready for
+                                                       // readers
+        assertEquals(6, r.size());
     }
 
     private static Record create(Segment segment, int positionLocal, Object o) {
@@ -129,10 +154,15 @@ public class AbstractStoreTest {
 
         List<Segment> segments = Lists.newArrayList(new Segment(new File("target/s1"), 0));
         List<Record> records = new ArrayList<>();
+        private final int segmentSize;
+
+        MyStore(int segmentSize) {
+            this.segmentSize = segmentSize;
+        }
 
         @Override
         int segmentSize() {
-            return 100;
+            return segmentSize;
         }
 
         @Override
@@ -142,16 +172,23 @@ public class AbstractStoreTest {
 
         @Override
         void writeInt(int positionLocal, int value) {
+            checkPositionLocal(positionLocal);
             records.add(new Record(writeSegment(), positionLocal, value));
+        }
+
+        private void checkPositionLocal(int positionLocal) {
+            Preconditions.checkArgument(positionLocal < segmentSize());
         }
 
         @Override
         void writeByte(int positionLocal, int value) {
+            checkPositionLocal(positionLocal);
             records.add(new Record(writeSegment(), positionLocal, (byte) value));
         }
 
         @Override
         void write(int positionLocal, ByteBuffer bb, int length) {
+            checkPositionLocal(positionLocal);
             byte[] bytes = new byte[length];
             int p = bb.position();
             bb.get(bytes);
@@ -161,14 +198,14 @@ public class AbstractStoreTest {
 
         @Override
         void writeInt(Segment segment, int positionLocal, int value) {
+            checkPositionLocal(positionLocal);
             records.add(new Record(segment, positionLocal, value));
         }
 
         @Override
         void send(Event event) {
             if (event instanceof SegmentFull) {
-                segments.add(
-                        new Segment(new File("target/s2"), writeSegment().start + segmentSize()));
+                segments.add(new Segment(new File("target/s2"), writeSegment().start + segmentSize()));
             } else if (event instanceof MessagePart) {
                 handleMessagePart((MessagePart) event);
             }
