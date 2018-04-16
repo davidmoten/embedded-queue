@@ -16,6 +16,8 @@ import org.davidmoten.eq.internal.event.MessagePart;
 import org.davidmoten.eq.internal.event.SegmentFull;
 import org.junit.Test;
 
+import com.github.davidmoten.guavamini.Lists;
+
 import io.reactivex.Scheduler;
 import io.reactivex.schedulers.Schedulers;
 
@@ -30,7 +32,7 @@ public class AbstractStoreTest {
         store.records.stream().forEach(System.out::println);
         Checksum c = new CRC32();
         c.update(msg, 0, msg.length);
-        Segment segment = store.segment;
+        Segment segment = store.writeSegment();
         List<Record> r = store.records;
         assertEquals(create(segment, 0, 0), r.get(0)); // write zero length
         assertEquals(create(segment, 4, (byte) 1), r.get(1)); // write padding length
@@ -122,7 +124,7 @@ public class AbstractStoreTest {
 
     private static final class MyStore extends AbstractStore {
 
-        Segment segment = new Segment(new File("target/s1"), 0);
+        List<Segment> segments = Lists.newArrayList(new Segment(new File("target/s1"), 0));
         List<Record> records = new ArrayList<>();
 
         @Override
@@ -132,17 +134,17 @@ public class AbstractStoreTest {
 
         @Override
         Segment writeSegment() {
-            return segment;
+            return segments.get(segments.size() - 1);
         }
 
         @Override
         void writeInt(int positionLocal, int value) {
-            records.add(new Record(segment, positionLocal, value));
+            records.add(new Record(writeSegment(), positionLocal, value));
         }
 
         @Override
         void writeByte(int positionLocal, int value) {
-            records.add(new Record(segment, positionLocal, (byte) value));
+            records.add(new Record(writeSegment(), positionLocal, (byte) value));
         }
 
         @Override
@@ -151,7 +153,7 @@ public class AbstractStoreTest {
             int p = bb.position();
             bb.get(bytes);
             bb.position(p);
-            records.add(new Record(segment, positionLocal, bytes));
+            records.add(new Record(writeSegment(), positionLocal, bytes));
         }
 
         @Override
@@ -162,7 +164,8 @@ public class AbstractStoreTest {
         @Override
         void send(Event event) {
             if (event instanceof SegmentFull) {
-                segment = new Segment(new File("target/s2"), segment.start + segmentSize());
+                segments.add(
+                        new Segment(new File("target/s2"), writeSegment().start + segmentSize()));
             } else if (event instanceof MessagePart) {
                 handleMessagePart((MessagePart) event);
             }
