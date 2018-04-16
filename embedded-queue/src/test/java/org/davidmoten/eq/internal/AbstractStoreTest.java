@@ -32,13 +32,15 @@ public class AbstractStoreTest {
         c.update(msg, 0, msg.length);
         Segment segment = store.segment;
         List<Record> r = store.records;
-        assertEquals(create(segment, 0, 0), r.get(0));
-        assertEquals(create(segment, 4, (byte) 1), r.get(1));
-        assertEquals(create(segment, 5, (byte) 0), r.get(2));
-        assertEquals(create(segment, 6, msg), r.get(3));
-        assertEquals(create(segment, 8, (int) c.getValue()), r.get(4));
-        assertEquals(create(segment, 12, 0), r.get(5));
-        assertEquals(create(segment, 0, 2), r.get(6));
+        assertEquals(create(segment, 0, 0), r.get(0)); // write zero length
+        assertEquals(create(segment, 4, (byte) 1), r.get(1)); // write padding length
+        assertEquals(create(segment, 5, (byte) 0), r.get(2)); // write padding
+        assertEquals(create(segment, 6, msg), r.get(3)); // write msg
+        assertEquals(create(segment, 8, (int) c.getValue()), r.get(4)); // write checksum
+        assertEquals(create(segment, 12, 0), r.get(5)); // write length of next record as zero for
+                                                        // readers
+        assertEquals(create(segment, 0, 2), r.get(6)); // rewrite length of message, now ready for
+                                                       // readers
         assertEquals(7, r.size());
     }
 
@@ -166,7 +168,7 @@ public class AbstractStoreTest {
         void send(Event event) {
             if (event instanceof SegmentFull) {
                 segment = new Segment(new File("target/s2"), segment.start + segmentSize());
-            } else if ( event instanceof MessagePart) {
+            } else if (event instanceof MessagePart) {
                 handleMessagePart((MessagePart) event);
             }
         }
