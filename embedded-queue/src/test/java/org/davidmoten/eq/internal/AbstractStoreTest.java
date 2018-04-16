@@ -68,12 +68,7 @@ public class AbstractStoreTest {
 
         @Override
         public int hashCode() {
-            final int prime = 31;
-            int result = 1;
-            result = prime * result + ((object == null) ? 0 : object.hashCode());
-            result = prime * result + positionLocal;
-            result = prime * result + ((segment == null) ? 0 : segment.hashCode());
-            return result;
+            throw new UnsupportedOperationException();
         }
 
         @Override
