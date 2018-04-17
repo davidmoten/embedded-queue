@@ -19,7 +19,6 @@ import org.junit.Test;
 import com.github.davidmoten.guavamini.Lists;
 import com.github.davidmoten.guavamini.Preconditions;
 
-import io.reactivex.Scheduler;
 import io.reactivex.schedulers.Schedulers;
 
 public class AbstractStoreTest {
@@ -53,6 +52,30 @@ public class AbstractStoreTest {
     @Test
     public void testHandleMessagePartUseWholeSegment() {
         MyStore store = new MyStore(12);
+        store.state = State.FIRST_PART;
+        byte[] msg = "hi".getBytes();
+        store.handleMessagePart(new MessagePart(ByteBuffer.wrap(msg)));
+        store.records.stream().forEach(System.out::println);
+        Checksum c = new CRC32();
+        c.update(msg, 0, msg.length);
+        Segment segment = store.writeSegment();
+        List<Record> r = store.records;
+        assertEquals(create(segment, 0, 0), r.get(0)); // write zero length
+        assertEquals(create(segment, 4, (byte) 1), r.get(1)); // write padding length
+        assertEquals(create(segment, 5, (byte) 0), r.get(2)); // write padding
+        assertEquals(create(segment, 6, msg), r.get(3)); // write msg
+        assertEquals(create(segment, 8, (int) c.getValue()), r.get(4)); // write checksum
+        //don't write zero length for next record as is end of segment and we assume that each new segment 
+        // has a zeroed first 4 bytes
+        // readers
+        assertEquals(create(segment, 0, 2), r.get(5)); // rewrite length of message, now ready for
+                                                       // readers
+        assertEquals(6, r.size());
+    }
+    
+    @Test
+    public void testHandleMessagePartUseMoreThanOneSegment() {
+        MyStore store = new MyStore(8);
         store.state = State.FIRST_PART;
         byte[] msg = "hi".getBytes();
         store.handleMessagePart(new MessagePart(ByteBuffer.wrap(msg)));
@@ -157,12 +180,9 @@ public class AbstractStoreTest {
         private final int segmentSize;
 
         MyStore(int segmentSize) {
+            super (segmentSize, Schedulers.trampoline());
+            Preconditions.checkArgument(segmentSize % 4 == 0);
             this.segmentSize = segmentSize;
-        }
-
-        @Override
-        int segmentSize() {
-            return segmentSize;
         }
 
         @Override
@@ -177,7 +197,7 @@ public class AbstractStoreTest {
         }
 
         private void checkPositionLocal(int positionLocal) {
-            Preconditions.checkArgument(positionLocal < segmentSize());
+            Preconditions.checkArgument(positionLocal < segmentSize);
         }
 
         @Override
@@ -205,7 +225,7 @@ public class AbstractStoreTest {
         @Override
         void send(Event event) {
             if (event instanceof SegmentFull) {
-                segments.add(new Segment(new File("target/s2"), writeSegment().start + segmentSize()));
+                segments.add(new Segment(new File("target/s2"), writeSegment().start + segmentSize));
             } else if (event instanceof MessagePart) {
                 handleMessagePart((MessagePart) event);
             }
@@ -215,11 +235,6 @@ public class AbstractStoreTest {
         void send(Event event1, Event event2) {
             send(event1);
             send(event2);
-        }
-
-        @Override
-        Scheduler scheduler() {
-            return Schedulers.trampoline();
         }
 
         @Override

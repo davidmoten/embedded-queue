@@ -15,8 +15,15 @@ import com.github.davidmoten.guavamini.annotations.VisibleForTesting;
 import io.reactivex.Scheduler;
 
 public abstract class AbstractStore {
+    
+    private final int segmentSize;
+    private final Scheduler scheduler;
 
-    abstract int segmentSize();
+    public AbstractStore(int segmentSize, Scheduler scheduler) {
+        this.segmentSize = segmentSize;
+        this.scheduler = scheduler;
+        
+    }
 
     abstract Segment writeSegment();
 
@@ -32,8 +39,6 @@ public abstract class AbstractStore {
 
     // avoid two drains by offering this method
     abstract void send(Event event1, Event event2);
-
-    abstract Scheduler scheduler();
 
     abstract Segment createSegment(long positionGlobal);
 
@@ -55,19 +60,19 @@ public abstract class AbstractStore {
     private static final int LENGTH_BYTES = 4;
 
     public final void handleSegmentFull(SegmentFull event) {
-        scheduler().scheduleDirect(new SegmentFullHandler(event) );
+        scheduler.scheduleDirect(new SegmentFullHandler(event));
     }
 
     public final void handleMessagePart(MessagePart event) {
         final int entryPositionLocal = (int) (writePositionGlobal - messageStartPositionLocal);
-        if (entryPositionLocal == segmentSize()) {
+        if (entryPositionLocal == segmentSize) {
             send(new SegmentFull(event));
         } else {
             State entryState = this.state;
-            scheduler().scheduleDirect(new MessagePartHandler(event, entryPositionLocal, entryState));
+            scheduler.scheduleDirect(new MessagePartHandler(event, entryPositionLocal, entryState));
         }
     }
-    
+
     private final class SegmentFullHandler implements Runnable {
 
         private final SegmentFull event;
@@ -79,14 +84,14 @@ public abstract class AbstractStore {
         @Override
         public void run() {
             Segment segment = createSegment(writePositionGlobal);
-            SegmentCreated event1 = new SegmentCreated(segment, segmentSize());
+            SegmentCreated event1 = new SegmentCreated(segment, segmentSize);
             if (event.messagePart == null) {
                 send(event1);
             } else {
                 send(event1, event.messagePart);
-            }            
+            }
         }
-        
+
     }
 
     private final class MessagePartHandler implements Runnable {
@@ -108,7 +113,7 @@ public abstract class AbstractStore {
                 int positionLocal = entryPositionLocal;
                 Event sendEvent = null;
                 while (true) {
-                    if (positionLocal == segmentSize()) {
+                    if (positionLocal == segmentSize) {
                         sendEvent = new SegmentFull(event);
                         break;
                     }
@@ -142,7 +147,7 @@ public abstract class AbstractStore {
                         /////////////////////////////
                         // write content (or continue writing content)
                         /////////////////////////////
-                        int bytesToWrite = Math.min(segmentSize() - positionLocal, event.bb.remaining());
+                        int bytesToWrite = Math.min(segmentSize - positionLocal, event.bb.remaining());
                         write(positionLocal, event.bb, bytesToWrite);
                         updateChecksum(checksum, event.bb, bytesToWrite);
                         positionLocal += bytesToWrite;
@@ -161,9 +166,10 @@ public abstract class AbstractStore {
                         positionLocal += CHECKSUM_BYTES;
                         // ensure the length field of the next item is set to zero
                         // if is end of segment then don't need to do it
-                        if (positionLocal < segmentSize()) {
+                        if (positionLocal < segmentSize) {
                             writeInt(positionLocal, 0);
                         }
+                        // rewrite the length field at the start of the message
                         writeInt(messageStartSegment, messageStartPositionLocal, contentLength);
                         state = State.FIRST_PART;
                         break;
