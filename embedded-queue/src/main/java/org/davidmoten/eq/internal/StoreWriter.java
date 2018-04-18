@@ -23,8 +23,6 @@ public interface StoreWriter extends HasEventQueue {
     // call from drain thread only
     void addSegment(Segment segment);
 
-    void requestAnotherMessagePart();
-
     void closeForWrite(Segment writeSegment);
     
     void errorOccurred(Throwable error);

@@ -9,6 +9,7 @@ import org.davidmoten.eq.internal.event.Event;
 import org.davidmoten.eq.internal.event.MessageEnd;
 import org.davidmoten.eq.internal.event.MessagePart;
 import org.davidmoten.eq.internal.event.Part;
+import org.davidmoten.eq.internal.event.PartWritten;
 import org.davidmoten.eq.internal.event.SegmentCreated;
 import org.davidmoten.eq.internal.event.SegmentFull;
 
@@ -129,6 +130,7 @@ public final class WriteHandler {
                 Segment entryWriteSegment = storeWriter.writeSegment();
                 Event sendEvent = null;
                 boolean endWritten = false;
+                boolean requestAnother = false;
                 while (true) {
                     if (positionLocal == segmentSize) {
                         sendEvent = new SegmentFull(part);
@@ -176,6 +178,7 @@ public final class WriteHandler {
                             if (bytesToWrite != mp.bb.remaining()) {
                                 mp.bb.position(mp.bb.position() + bytesToWrite);
                                 if (!mp.bb.hasRemaining()) {
+                                    requestAnother = true;
                                     break;
                                 }
                             } else {
@@ -205,8 +208,11 @@ public final class WriteHandler {
                 if (sendEvent != null) {
                     storeWriter.send(new SegmentFull(part));
                 }
+                if (requestAnother) {
+                    storeWriter.send(new PartWritten());
+                }
                 if (endWritten) {
-                    storeWriter.send(new EndWritten());
+                    storeWriter.send(EndWritten.instance());
                     if (messageStartSegment != entryWriteSegment) {
                         storeWriter.closeForWrite(messageStartSegment);
                     }
