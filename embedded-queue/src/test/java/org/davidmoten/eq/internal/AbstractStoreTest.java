@@ -13,6 +13,7 @@ import java.util.zip.Checksum;
 import org.davidmoten.eq.internal.AbstractStore.State;
 import org.davidmoten.eq.internal.event.Event;
 import org.davidmoten.eq.internal.event.MessagePart;
+import org.davidmoten.eq.internal.event.SegmentCreated;
 import org.davidmoten.eq.internal.event.SegmentFull;
 import org.junit.Test;
 
@@ -82,19 +83,19 @@ public class AbstractStoreTest {
         store.records.stream().forEach(System.out::println);
         Checksum c = new CRC32();
         c.update(msg, 0, msg.length);
-        Segment segment = store.writeSegment();
+        Segment segment1 = store.segments.get(0);
+        Segment segment2 = store.segments.get(1);
         List<Record> r = store.records;
-        assertEquals(create(segment, 0, 0), r.get(0)); // write zero length
-        assertEquals(create(segment, 4, (byte) 1), r.get(1)); // write padding length
-        assertEquals(create(segment, 5, (byte) 0), r.get(2)); // write padding
-        assertEquals(create(segment, 6, msg), r.get(3)); // write msg
-        assertEquals(create(segment, 8, (int) c.getValue()), r.get(4)); // write checksum
-        //don't write zero length for next record as is end of segment and we assume that each new segment 
-        // has a zeroed first 4 bytes
-        // readers
-        assertEquals(create(segment, 0, 2), r.get(5)); // rewrite length of message, now ready for
+        System.out.println(store.segments);
+        assertEquals(create(segment1, 0, 0), r.get(0)); // write zero length
+        assertEquals(create(segment1, 4, (byte) 1), r.get(1)); // write padding length
+        assertEquals(create(segment1, 5, (byte) 0), r.get(2)); // write padding
+        assertEquals(create(segment1, 6, msg), r.get(3)); // write msg (2 bytes)
+        assertEquals(create(segment2, 0, (int) c.getValue()), r.get(4)); // write checksum
+        assertEquals(create(segment2, 4, 0), r.get(5)); // write length 0 for next record
+        assertEquals(create(segment1, 0, 2), r.get(6)); // rewrite length of message, now ready for
                                                        // readers
-        assertEquals(6, r.size());
+        assertEquals(7, r.size());
     }
 
     private static Record create(Segment segment, int positionLocal, Object o) {
@@ -225,9 +226,11 @@ public class AbstractStoreTest {
         @Override
         void send(Event event) {
             if (event instanceof SegmentFull) {
-                segments.add(new Segment(new File("target/s2"), writeSegment().start + segmentSize));
+                handleSegmentFull((SegmentFull) event);
             } else if (event instanceof MessagePart) {
                 handleMessagePart((MessagePart) event);
+            } else if ( event instanceof SegmentCreated) {
+                segments.add(((SegmentCreated) event).segment);
             }
         }
 

@@ -64,7 +64,7 @@ public abstract class AbstractStore {
     }
 
     public final void handleMessagePart(MessagePart event) {
-        final int entryPositionLocal = (int) (writePositionGlobal - messageStartPositionLocal);
+        final int entryPositionLocal = (int) (writePositionGlobal - writeSegment().start);
         if (entryPositionLocal == segmentSize) {
             send(new SegmentFull(event));
         } else {
