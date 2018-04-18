@@ -1,6 +1,7 @@
 package org.davidmoten.eq.internal;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
 import java.io.File;
@@ -12,9 +13,11 @@ import java.util.List;
 import java.util.zip.CRC32;
 import java.util.zip.Checksum;
 
-import org.davidmoten.eq.internal.AbstractStore.State;
+import org.davidmoten.eq.internal.WriteHandler.State;
 import org.davidmoten.eq.internal.event.Event;
+import org.davidmoten.eq.internal.event.MessageEnd;
 import org.davidmoten.eq.internal.event.MessagePart;
+import org.davidmoten.eq.internal.event.Part;
 import org.davidmoten.eq.internal.event.SegmentCreated;
 import org.davidmoten.eq.internal.event.SegmentFull;
 import org.junit.Test;
@@ -24,16 +27,17 @@ import com.github.davidmoten.guavamini.Preconditions;
 
 import io.reactivex.schedulers.Schedulers;
 
-public class AbstractStoreTest {
+public class WriteHandlerTest {
 
     @Test
     public void testHandleMessagePartUsePartSegment() {
-        MyAbstractStore store = new MyAbstractStore(100);
-        store.state = State.FIRST_PART;
+        MyStore store = new MyStore(100);
+        store.writeHandler.state = State.FIRST_PART;
         byte[] msg = "hi".getBytes();
         int start = 4;
-        store.writePositionGlobal = start;
-        store.handleMessagePart(new MessagePart(ByteBuffer.wrap(msg)));
+        store.writeHandler.writePositionGlobal = start;
+        store.writeHandler.handlePart(new MessagePart(ByteBuffer.wrap(msg)));
+        store.writeHandler.handlePart(MessageEnd.instance());
         store.records.stream().forEach(System.out::println);
         Checksum c = new CRC32();
         c.update(msg, 0, msg.length);
@@ -51,14 +55,16 @@ public class AbstractStoreTest {
         // readers
         assertEquals(7, r.size());
         assertTrue(store.closed.isEmpty());
+        assertNull(store.error);
     }
 
     @Test
     public void testHandleMessagePartUseWholeSegment() {
-        MyAbstractStore store = new MyAbstractStore(12);
-        store.state = State.FIRST_PART;
+        MyStore store = new MyStore(12);
+        store.writeHandler.state = State.FIRST_PART;
         byte[] msg = "hi".getBytes();
-        store.handleMessagePart(new MessagePart(ByteBuffer.wrap(msg)));
+        store.writeHandler.handlePart(new MessagePart(ByteBuffer.wrap(msg)));
+        store.writeHandler.handlePart(MessageEnd.instance());
         store.records.stream().forEach(System.out::println);
         Checksum c = new CRC32();
         c.update(msg, 0, msg.length);
@@ -77,14 +83,16 @@ public class AbstractStoreTest {
                                                        // readers
         assertEquals(6, r.size());
         assertTrue(store.closed.isEmpty());
+        assertNull(store.error);
     }
 
     @Test
     public void testHandleMessagePartChecksumInNextSegment() {
-        MyAbstractStore store = new MyAbstractStore(8);
-        store.state = State.FIRST_PART;
+        MyStore store = new MyStore(8);
+        store.writeHandler.state = State.FIRST_PART;
         byte[] msg = "hi".getBytes();
-        store.handleMessagePart(new MessagePart(ByteBuffer.wrap(msg)));
+        store.writeHandler.handlePart(new MessagePart(ByteBuffer.wrap(msg)));
+        store.writeHandler.handlePart(MessageEnd.instance());
         store.records.stream().forEach(System.out::println);
         Checksum c = new CRC32();
         c.update(msg, 0, msg.length);
@@ -102,17 +110,19 @@ public class AbstractStoreTest {
                                                         // readers
         assertEquals(7, r.size());
         assertEquals(Collections.singletonList(segment1), store.closed);
+        assertNull(store.error);
     }
 
     @Test
     public void testHandleMessagePartContentSplitAcrossTwoSegments() {
-        MyAbstractStore store = new MyAbstractStore(8);
-        store.state = State.FIRST_PART;
+        MyStore store = new MyStore(8);
+        store.writeHandler.state = State.FIRST_PART;
 
         // 6 bytes, 2 of which will be written to first segment
         // and the other 4 will be at the start of the second segment
         byte[] msg = "hi1234".getBytes();
-        store.handleMessagePart(new MessagePart(ByteBuffer.wrap(msg)));
+        store.writeHandler.handlePart(new MessagePart(ByteBuffer.wrap(msg)));
+        store.writeHandler.handlePart(MessageEnd.instance());
         store.records.stream().forEach(System.out::println);
         Checksum c = new CRC32();
         c.update(msg, 0, msg.length);
@@ -208,26 +218,28 @@ public class AbstractStoreTest {
         }
     }
 
-    private static final class MyAbstractStore extends AbstractStore {
+    private static final class MyStore implements StoreWriter {
 
         final List<Segment> segments = Lists.newArrayList(new Segment(new File("target/s1"), 0));
         final List<Record> records = new ArrayList<>();
         final List<Segment> closed = new ArrayList<>();
+        final WriteHandler writeHandler;
+        Throwable error;
         private final int segmentSize;
 
-        MyAbstractStore(int segmentSize) {
-            super(segmentSize, Schedulers.trampoline());
-            Preconditions.checkArgument(segmentSize % 4 == 0);
+        MyStore(int segmentSize) {
             this.segmentSize = segmentSize;
+            Preconditions.checkArgument(segmentSize % 4 == 0);
+            this.writeHandler = new WriteHandler(this, segmentSize, Schedulers.trampoline());
         }
 
         @Override
-        Segment writeSegment() {
+        public Segment writeSegment() {
             return segments.get(segments.size() - 1);
         }
 
         @Override
-        void writeInt(int positionLocal, int value) {
+        public void writeInt(int positionLocal, int value) {
             checkPositionLocal(positionLocal);
             records.add(new Record(writeSegment(), positionLocal, value));
         }
@@ -237,13 +249,13 @@ public class AbstractStoreTest {
         }
 
         @Override
-        void writeByte(int positionLocal, int value) {
+        public void writeByte(int positionLocal, int value) {
             checkPositionLocal(positionLocal);
             records.add(new Record(writeSegment(), positionLocal, (byte) value));
         }
 
         @Override
-        void write(int positionLocal, ByteBuffer bb, int length) {
+        public void write(int positionLocal, ByteBuffer bb, int length) {
             checkPositionLocal(positionLocal);
             byte[] bytes = new byte[length];
             int p = bb.position();
@@ -253,41 +265,52 @@ public class AbstractStoreTest {
         }
 
         @Override
-        void writeInt(Segment segment, int positionLocal, int value) {
+        public void writeInt(Segment segment, int positionLocal, int value) {
             checkPositionLocal(positionLocal);
             records.add(new Record(segment, positionLocal, value));
         }
 
         @Override
-        void send(Event event) {
+        public void send(Event event) {
             if (event instanceof SegmentFull) {
-                handleSegmentFull((SegmentFull) event);
-            } else if (event instanceof MessagePart) {
-                handleMessagePart((MessagePart) event);
+                writeHandler.handleSegmentFull((SegmentFull) event);
+            } else if (event instanceof Part) {
+                writeHandler.handlePart((Part) event);
             } else if (event instanceof SegmentCreated) {
-                handleSegmentCreated((SegmentCreated) event);
+                writeHandler.handleSegmentCreated((SegmentCreated) event);
             }
         }
 
         @Override
-        void send(Event event1, Event event2) {
+        public void send(Event event1, Event event2) {
             send(event1);
             send(event2);
         }
 
         @Override
-        Segment createSegment(long positionGlobal) {
+        public Segment createSegment(long positionGlobal) {
             return new Segment(new File("target/" + positionGlobal), positionGlobal);
         }
 
         @Override
-        void addSegment(Segment segment) {
+        public void addSegment(Segment segment) {
             segments.add(segment);
         }
 
         @Override
-        void closeWriteSegment() {
-            closed.add(writeSegment());
+        public void requestAnotherMessagePart() {
+            // TODO Auto-generated method stub
+            
+        }
+
+        @Override
+        public void closeForWrite(Segment segment) {
+            closed.add(segment);
+        }
+
+        @Override
+        public void errorOccurred(Throwable error) {
+            this.error = error;
         }
     }
 }

@@ -2,9 +2,9 @@ package org.davidmoten.eq.internal.event;
 
 public class SegmentFull implements Event{
     
-    public final MessagePart messagePart;
+    public final Part part;
 
-    public SegmentFull(MessagePart event) {
-        this.messagePart = event;        
+    public SegmentFull(Part event) {
+        this.part = event;        
     }
 }

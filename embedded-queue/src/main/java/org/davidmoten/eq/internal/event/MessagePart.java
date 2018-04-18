@@ -9,4 +9,9 @@ public class MessagePart implements Part {
     public MessagePart(ByteBuffer bb) {
         this.bb = bb;
     }
+
+    @Override
+    public int length() {
+        return bb.remaining();
+    }
 }
