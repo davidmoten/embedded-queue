@@ -281,4 +281,9 @@ public final class FileSystemStore extends Completable implements Store, StoreWr
         return new FlowableRead(this, positionGlobal);
     }
 
+    public void requestBatch() {
+        // TODO Auto-generated method stub
+        
+    }
+
 }

@@ -10,6 +10,8 @@ import org.reactivestreams.Subscriber;
 import org.reactivestreams.Subscription;
 
 import io.reactivex.Flowable;
+import io.reactivex.internal.fuseable.SimplePlainQueue;
+import io.reactivex.internal.queue.SpscLinkedArrayQueue;
 import io.reactivex.internal.subscriptions.SubscriptionHelper;
 import io.reactivex.internal.util.BackpressureHelper;
 
@@ -37,8 +39,19 @@ public final class FlowableRead extends Flowable<ByteBuffer> {
         private final AtomicBoolean once = new AtomicBoolean();
         private final long positionGlobal;
         private final AtomicLong requested = new AtomicLong();
+        private final SimplePlainQueue<Object> queue = new SpscLinkedArrayQueue<Object>(16);
 
-        public ReadSubscription(Subscriber<? super ByteBuffer> subscriber, FileSystemStore store, long positionGlobal) {
+        private static final int NOT_REQUESTED_NOT_AVAILABLE = 0;
+        private static final int REQUESTED_NOT_AVAILABLE = 1;
+        private static final int NOT_REQUESTED_AVAILABLE = 2;
+        private static final int REQUESTED_AVAILABLE = 3;
+
+        private final AtomicInteger state = new AtomicInteger();
+
+        private volatile boolean cancelled;
+
+        public ReadSubscription(Subscriber<? super ByteBuffer> subscriber, FileSystemStore store,
+                long positionGlobal) {
             this.subscriber = subscriber;
             this.store = store;
             this.positionGlobal = positionGlobal;
@@ -55,13 +68,93 @@ public final class FlowableRead extends Flowable<ByteBuffer> {
             }
         }
 
+        public void batchFinished() {
+            while (true) {
+                int s = state.get();
+                if (s == REQUESTED_AVAILABLE) {
+                    if (state.compareAndSet(s, NOT_REQUESTED_AVAILABLE)) {
+                        break;
+                    }
+                } else if (s == REQUESTED_NOT_AVAILABLE) {
+                    if (state.compareAndSet(s, NOT_REQUESTED_NOT_AVAILABLE)) {
+                        break;
+                    }
+                } else {
+                    break;
+                }
+            }
+        }
+
+        public void available() {
+            while (true) {
+                int s = state.get();
+                if (s == REQUESTED_NOT_AVAILABLE) {
+                    if (state.compareAndSet(s, REQUESTED_AVAILABLE)) {
+                        break;
+                    }
+                } else if (s == NOT_REQUESTED_NOT_AVAILABLE) {
+                    if (state.compareAndSet(s, NOT_REQUESTED_AVAILABLE)) {
+                        break;
+                    }
+                } else {
+                    break;
+                }
+            }
+            drain();
+        }
+
+        public void notAvailable() {
+            while (true) {
+                int s = state.get();
+                if (s == REQUESTED_AVAILABLE) {
+                    if (state.compareAndSet(s, REQUESTED_NOT_AVAILABLE)) {
+                        break;
+                    }
+                } else if (s == NOT_REQUESTED_AVAILABLE) {
+                    if (state.compareAndSet(s, NOT_REQUESTED_NOT_AVAILABLE)) {
+                        break;
+                    }
+                } else {
+                    break;
+                }
+            }
+            drain();
+        }
+
         private void drain() {
             if (getAndIncrement() == 0) {
                 int missed = 1;
                 while (true) {
-                    while (true) {
-                        // TODO
-                        break;
+                    if (cancelled) {
+                        return;
+                    }
+                    long r = requested.get();
+                    long e = 0;
+                    while (e != r) {
+                        Object o = queue.poll();
+                        if (o == null) {
+                            while (true) {
+                                int s = state.get();
+                                if (s == NOT_REQUESTED_AVAILABLE) {
+                                    if (state.compareAndSet(s, REQUESTED_AVAILABLE)) {
+                                        store.requestBatch();
+                                        break;
+                                    }
+                                } else {
+                                    break;
+                                }
+                            }
+                            break;
+                        } else {
+                            e++;
+                            subscriber.onNext((ByteBuffer) o);
+                        }
+                        if (cancelled) {
+                            return;
+                        }
+                    }
+                    if (e != 0) {
+                        BackpressureHelper.produced(requested, e);
                     }
                     missed = addAndGet(-missed);
                     if (missed == 0) {
@@ -73,8 +166,8 @@ public final class FlowableRead extends Flowable<ByteBuffer> {
 
         @Override
         public void cancel() {
-            // TODO Auto-generated method stub
-
+            cancelled = true;
+            // TODO remove reader from Store
         }
 
     }
