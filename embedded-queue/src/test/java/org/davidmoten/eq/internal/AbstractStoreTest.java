@@ -75,7 +75,7 @@ public class AbstractStoreTest {
     }
     
     @Test
-    public void testHandleMessagePartUseMoreThanOneSegment() {
+    public void testHandleMessagePartChecksumInNextSegment() {
         MyStore store = new MyStore(8);
         store.state = State.FIRST_PART;
         byte[] msg = "hi".getBytes();
