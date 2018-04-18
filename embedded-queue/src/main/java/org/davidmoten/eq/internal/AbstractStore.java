@@ -43,7 +43,7 @@ public abstract class AbstractStore {
     abstract Segment createSegment(long positionGlobal);
 
     public enum State {
-        FIRST_PART, WRITTEN_LENGTH, WRITTEN_PADDING, WRITTEN_CONTENT, FULL_SEGMENT;
+        FIRST_PART, WRITTEN_LENGTH, WRITTEN_PADDING, WRITTEN_CONTENT;
     }
 
     private final Checksum checksum = new CRC32();
@@ -53,7 +53,7 @@ public abstract class AbstractStore {
     Segment messageStartSegment;
     int messageStartPositionLocal;
 
-    State state = State.FULL_SEGMENT;
+    State state = State.FIRST_PART;
 
     private static final int CHECKSUM_BYTES = 4;
 
