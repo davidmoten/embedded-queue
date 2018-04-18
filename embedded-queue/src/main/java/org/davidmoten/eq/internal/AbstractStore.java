@@ -121,7 +121,7 @@ public abstract class AbstractStore {
             try {
                 State state = entryState;
                 int positionLocal = entryPositionLocal;
-                System.out.println("segment="+ writeSegment());
+                Segment entryWriteSegment = writeSegment();
                 Event sendEvent = null;
                 while (true) {
                     if (positionLocal == segmentSize) {
@@ -137,7 +137,7 @@ public abstract class AbstractStore {
                         // write 0 in the length field till writing finished and we will come
                         // back and overwrite it with content length
                         writeInt(positionLocal, 0);
-                        messageStartSegment = writeSegment();
+                        messageStartSegment = entryWriteSegment;
                         messageStartPositionLocal = positionLocal;
                         positionLocal += LENGTH_BYTES;
                         checksum.reset();
@@ -186,7 +186,7 @@ public abstract class AbstractStore {
                         break;
                     }
                 }
-                writePositionGlobal = positionLocal - entryPositionLocal;
+                writePositionGlobal = positionLocal - entryPositionLocal + entryWriteSegment.start;
                 AbstractStore.this.state = state;
                 if (sendEvent != null) {
                     send(new SegmentFull(event));

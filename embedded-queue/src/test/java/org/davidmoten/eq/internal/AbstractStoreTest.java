@@ -28,7 +28,7 @@ public class AbstractStoreTest {
 
     @Test
     public void testHandleMessagePartUsePartSegment() {
-        MyStore store = new MyStore(100);
+        MyAbstractStore store = new MyAbstractStore(100);
         store.state = State.FIRST_PART;
         byte[] msg = "hi".getBytes();
         int start = 4;
@@ -55,7 +55,7 @@ public class AbstractStoreTest {
 
     @Test
     public void testHandleMessagePartUseWholeSegment() {
-        MyStore store = new MyStore(12);
+        MyAbstractStore store = new MyAbstractStore(12);
         store.state = State.FIRST_PART;
         byte[] msg = "hi".getBytes();
         store.handleMessagePart(new MessagePart(ByteBuffer.wrap(msg)));
@@ -81,7 +81,7 @@ public class AbstractStoreTest {
 
     @Test
     public void testHandleMessagePartChecksumInNextSegment() {
-        MyStore store = new MyStore(8);
+        MyAbstractStore store = new MyAbstractStore(8);
         store.state = State.FIRST_PART;
         byte[] msg = "hi".getBytes();
         store.handleMessagePart(new MessagePart(ByteBuffer.wrap(msg)));
@@ -106,7 +106,7 @@ public class AbstractStoreTest {
 
     @Test
     public void testHandleMessagePartContentSplitAcrossTwoSegments() {
-        MyStore store = new MyStore(8);
+        MyAbstractStore store = new MyAbstractStore(8);
         store.state = State.FIRST_PART;
 
         // 6 bytes, 2 of which will be written to first segment
@@ -208,14 +208,14 @@ public class AbstractStoreTest {
         }
     }
 
-    private static final class MyStore extends AbstractStore {
+    private static final class MyAbstractStore extends AbstractStore {
 
         final List<Segment> segments = Lists.newArrayList(new Segment(new File("target/s1"), 0));
         final List<Record> records = new ArrayList<>();
         final List<Segment> closed = new ArrayList<>();
         private final int segmentSize;
 
-        MyStore(int segmentSize) {
+        MyAbstractStore(int segmentSize) {
             super(segmentSize, Schedulers.trampoline());
             Preconditions.checkArgument(segmentSize % 4 == 0);
             this.segmentSize = segmentSize;
