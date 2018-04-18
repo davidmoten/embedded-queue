@@ -276,4 +276,9 @@ public final class FileSystemStore extends Completable implements Store, StoreWr
         segment.closeForWrite();
     }
 
+    @Override
+    public Flowable<ByteBuffer> read(long positionGlobal) {
+        return new FlowableRead(this, positionGlobal);
+    }
+
 }

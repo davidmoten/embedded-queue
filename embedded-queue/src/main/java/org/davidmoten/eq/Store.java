@@ -12,4 +12,6 @@ public interface Store {
     Completable add(ByteBuffer bb);
 
     Completable add(Flowable<ByteBuffer> byteBuffers);
+    
+    Flowable<ByteBuffer> read(long positionGlobal);
 }
