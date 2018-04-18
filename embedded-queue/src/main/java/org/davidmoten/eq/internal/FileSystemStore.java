@@ -37,6 +37,7 @@ public final class FileSystemStore extends Completable implements Store, StoreWr
     final int segmentSize;
     final Scheduler io;
     final File directory;
+    final WriteHandler writeHandler;
 
     private final AtomicInteger wip = new AtomicInteger();
 
@@ -49,7 +50,6 @@ public final class FileSystemStore extends Completable implements Store, StoreWr
     private Flowable<Part> source;
     private Subscription sourceSubscription;
     private CompletableObserver child;
-    private final WriteHandler writeHandler;
 
     public FileSystemStore(File directory, int segmentSize, Scheduler io) {
         this.directory = directory;
