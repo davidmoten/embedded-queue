@@ -66,14 +66,15 @@ public class AbstractStoreTest {
         assertEquals(create(segment, 5, (byte) 0), r.get(2)); // write padding
         assertEquals(create(segment, 6, msg), r.get(3)); // write msg
         assertEquals(create(segment, 8, (int) c.getValue()), r.get(4)); // write checksum
-        //don't write zero length for next record as is end of segment and we assume that each new segment 
+        // don't write zero length for next record as is end of segment and we assume
+        // that each new segment
         // has a zeroed first 4 bytes
         // readers
         assertEquals(create(segment, 0, 2), r.get(5)); // rewrite length of message, now ready for
                                                        // readers
         assertEquals(6, r.size());
     }
-    
+
     @Test
     public void testHandleMessagePartChecksumInNextSegment() {
         MyStore store = new MyStore(8);
@@ -94,14 +95,17 @@ public class AbstractStoreTest {
         assertEquals(create(segment2, 0, (int) c.getValue()), r.get(4)); // write checksum
         assertEquals(create(segment2, 4, 0), r.get(5)); // write length 0 for next record
         assertEquals(create(segment1, 0, 2), r.get(6)); // rewrite length of message, now ready for
-                                                       // readers
+                                                        // readers
         assertEquals(7, r.size());
     }
-    
+
     @Test
     public void testHandleMessagePartContentSplitAcrossTwoSegments() {
         MyStore store = new MyStore(8);
         store.state = State.FIRST_PART;
+
+        // 6 bytes, 2 of which will be written to first segment
+        // and the other 4 will be at the start of the second segment
         byte[] msg = "hi1234".getBytes();
         store.handleMessagePart(new MessagePart(ByteBuffer.wrap(msg)));
         store.records.stream().forEach(System.out::println);
@@ -118,10 +122,10 @@ public class AbstractStoreTest {
         assertEquals(create(segment2, 0, Arrays.copyOfRange(msg, 2, 6)), r.get(4)); // write msg (2 bytes)
         assertEquals(create(segment2, 4, (int) c.getValue()), r.get(5)); // write checksum
         assertEquals(create(segment1, 0, 6), r.get(6)); // rewrite length of message, now ready for
-                                                       // readers
+                                                        // readers
         assertEquals(7, r.size());
     }
-    
+
     private static Record create(Segment segment, int positionLocal, Object o) {
         return new Record(segment, positionLocal, o);
     }
@@ -205,7 +209,7 @@ public class AbstractStoreTest {
         private final int segmentSize;
 
         MyStore(int segmentSize) {
-            super (segmentSize, Schedulers.trampoline());
+            super(segmentSize, Schedulers.trampoline());
             Preconditions.checkArgument(segmentSize % 4 == 0);
             this.segmentSize = segmentSize;
         }
@@ -253,7 +257,7 @@ public class AbstractStoreTest {
                 handleSegmentFull((SegmentFull) event);
             } else if (event instanceof MessagePart) {
                 handleMessagePart((MessagePart) event);
-            } else if ( event instanceof SegmentCreated) {
+            } else if (event instanceof SegmentCreated) {
                 segments.add(((SegmentCreated) event).segment);
                 System.out.println("segment created and added to segments");
             }
