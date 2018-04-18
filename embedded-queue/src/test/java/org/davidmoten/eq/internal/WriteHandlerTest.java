@@ -298,12 +298,6 @@ public class WriteHandlerTest {
         }
 
         @Override
-        public void requestAnotherMessagePart() {
-            // TODO Auto-generated method stub
-            
-        }
-
-        @Override
         public void closeForWrite(Segment segment) {
             closed.add(segment);
         }
