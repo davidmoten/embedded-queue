@@ -130,7 +130,7 @@ public final class WriteHandler {
                 Segment entryWriteSegment = storeWriter.writeSegment();
                 Event sendEvent = null;
                 boolean endWritten = false;
-                boolean requestAnother = false;
+                boolean partWritten = false;
                 while (true) {
                     if (positionLocal == segmentSize) {
                         sendEvent = new SegmentFull(part);
@@ -178,7 +178,7 @@ public final class WriteHandler {
                             if (bytesToWrite != mp.bb.remaining()) {
                                 mp.bb.position(mp.bb.position() + bytesToWrite);
                                 if (!mp.bb.hasRemaining()) {
-                                    requestAnother = true;
+                                    partWritten = true;
                                     break;
                                 }
                             } else {
@@ -208,7 +208,7 @@ public final class WriteHandler {
                 if (sendEvent != null) {
                     storeWriter.send(new SegmentFull(part));
                 }
-                if (requestAnother) {
+                if (partWritten) {
                     storeWriter.send(new PartWritten());
                 }
                 if (endWritten) {
