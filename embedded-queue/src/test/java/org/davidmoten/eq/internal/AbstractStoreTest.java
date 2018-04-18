@@ -97,7 +97,31 @@ public class AbstractStoreTest {
                                                        // readers
         assertEquals(7, r.size());
     }
-
+    
+    @Test
+    public void testHandleMessagePartContentSplitAcrossTwoSegments() {
+        MyStore store = new MyStore(8);
+        store.state = State.FIRST_PART;
+        byte[] msg = "hi1234".getBytes();
+        store.handleMessagePart(new MessagePart(ByteBuffer.wrap(msg)));
+        store.records.stream().forEach(System.out::println);
+        Checksum c = new CRC32();
+        c.update(msg, 0, msg.length);
+        Segment segment1 = store.segments.get(0);
+        Segment segment2 = store.segments.get(1);
+        List<Record> r = store.records;
+        System.out.println(store.segments);
+        assertEquals(create(segment1, 0, 0), r.get(0)); // write zero length
+        assertEquals(create(segment1, 4, (byte) 1), r.get(1)); // write padding length
+        assertEquals(create(segment1, 5, (byte) 0), r.get(2)); // write padding
+        assertEquals(create(segment1, 6, Arrays.copyOfRange(msg, 0, 2)), r.get(3)); // write msg (2 bytes)
+        assertEquals(create(segment2, 0, Arrays.copyOfRange(msg, 2, 6)), r.get(4)); // write msg (2 bytes)
+        assertEquals(create(segment2, 4, (int) c.getValue()), r.get(5)); // write checksum
+        assertEquals(create(segment1, 0, 6), r.get(6)); // rewrite length of message, now ready for
+                                                       // readers
+        assertEquals(7, r.size());
+    }
+    
     private static Record create(Segment segment, int positionLocal, Object o) {
         return new Record(segment, positionLocal, o);
     }
@@ -231,6 +255,7 @@ public class AbstractStoreTest {
                 handleMessagePart((MessagePart) event);
             } else if ( event instanceof SegmentCreated) {
                 segments.add(((SegmentCreated) event).segment);
+                System.out.println("segment created and added to segments");
             }
         }
 

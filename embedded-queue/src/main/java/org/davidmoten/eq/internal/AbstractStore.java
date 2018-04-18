@@ -111,6 +111,7 @@ public abstract class AbstractStore {
             try {
                 State state = entryState;
                 int positionLocal = entryPositionLocal;
+                System.out.println("segment="+ writeSegment());
                 Event sendEvent = null;
                 while (true) {
                     if (positionLocal == segmentSize) {
@@ -190,7 +191,7 @@ public abstract class AbstractStore {
     @VisibleForTesting
     static void updateChecksum(Checksum checksum, ByteBuffer bb, int bytesToWrite) {
         if (bb.hasArray()) {
-            checksum.update(bb.array(), bb.arrayOffset() + bb.position(), bb.remaining());
+            checksum.update(bb.array(), bb.arrayOffset() + bb.position(), bytesToWrite);
         } else {
             int p = bb.position();
             for (int i = 0; i < bytesToWrite; i++) {

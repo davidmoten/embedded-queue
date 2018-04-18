@@ -10,5 +10,10 @@ public class Segment {
         this.file = file;
         this.start = start;
     }
+     
+    @Override 
+    public String toString() {
+        return "Segment[" + start + "]";
+    }
 
 }
