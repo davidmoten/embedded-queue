@@ -19,7 +19,7 @@ public final class Segment {
 
     @Override
     public String toString() {
-        return "Segment[" + start + "]";
+        return "" + start;
     }
 
     public RandomAccessFile writeFile() {

@@ -128,6 +128,7 @@ public final class WriteHandler {
                 int positionLocal = entryPositionLocal;
                 Segment entryWriteSegment = storeWriter.writeSegment();
                 Event sendEvent = null;
+                boolean endWritten = false;
                 while (true) {
                     if (positionLocal == segmentSize) {
                         sendEvent = new SegmentFull(part);
@@ -172,11 +173,13 @@ public final class WriteHandler {
                             updateChecksum(checksum, mp.bb, bytesToWrite);
                             positionLocal += bytesToWrite;
                             contentLength += bytesToWrite;
-                            if (bytesToWrite == mp.bb.remaining()) {
-                                state = State.WRITING_CONTENT;
-                            } else {
-                                // alter the bb
+                            if (bytesToWrite != mp.bb.remaining()) {
                                 mp.bb.position(mp.bb.position() + bytesToWrite);
+                                if (!mp.bb.hasRemaining()) {
+                                    break;
+                                }
+                            } else {
+                                break;
                             }
                         }
                     } else if (state == State.WRITTEN_CONTENT) {
@@ -193,14 +196,20 @@ public final class WriteHandler {
                         // rewrite the length field at the start of the message
                         storeWriter.writeInt(messageStartSegment, messageStartPositionLocal, contentLength);
                         state = State.FIRST_PART;
-                        storeWriter.send(new EndWritten());
+                        endWritten = true;
                         break;
                     }
                 }
-                writePositionGlobal = positionLocal - entryPositionLocal + entryWriteSegment.start;
+                writePositionGlobal += positionLocal - entryPositionLocal;
                 WriteHandler.this.state = state;
                 if (sendEvent != null) {
                     storeWriter.send(new SegmentFull(part));
+                }
+                if (endWritten) {
+                    storeWriter.send(new EndWritten());
+                    if (messageStartSegment != entryWriteSegment) {
+                        storeWriter.closeForWrite(messageStartSegment);
+                    }
                 }
             } catch (Throwable e) {
                 e.printStackTrace();
