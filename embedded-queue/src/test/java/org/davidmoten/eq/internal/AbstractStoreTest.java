@@ -1,11 +1,13 @@
 package org.davidmoten.eq.internal;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertTrue;
 
 import java.io.File;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.List;
 import java.util.zip.CRC32;
 import java.util.zip.Checksum;
@@ -48,6 +50,7 @@ public class AbstractStoreTest {
         assertEquals(create(segment, start + 0, 2), r.get(6)); // rewrite length of message, now ready for
         // readers
         assertEquals(7, r.size());
+        assertTrue(store.closed.isEmpty());
     }
 
     @Test
@@ -73,6 +76,7 @@ public class AbstractStoreTest {
         assertEquals(create(segment, 0, 2), r.get(5)); // rewrite length of message, now ready for
                                                        // readers
         assertEquals(6, r.size());
+        assertTrue(store.closed.isEmpty());
     }
 
     @Test
@@ -97,6 +101,7 @@ public class AbstractStoreTest {
         assertEquals(create(segment1, 0, 2), r.get(6)); // rewrite length of message, now ready for
                                                         // readers
         assertEquals(7, r.size());
+        assertEquals(Collections.singletonList(segment1), store.closed);
     }
 
     @Test
@@ -124,6 +129,7 @@ public class AbstractStoreTest {
         assertEquals(create(segment1, 0, 6), r.get(6)); // rewrite length of message, now ready for
                                                         // readers
         assertEquals(7, r.size());
+        assertEquals(Collections.singletonList(segment1), store.closed);
     }
 
     private static Record create(Segment segment, int positionLocal, Object o) {
@@ -204,8 +210,9 @@ public class AbstractStoreTest {
 
     private static final class MyStore extends AbstractStore {
 
-        List<Segment> segments = Lists.newArrayList(new Segment(new File("target/s1"), 0));
-        List<Record> records = new ArrayList<>();
+        final List<Segment> segments = Lists.newArrayList(new Segment(new File("target/s1"), 0));
+        final List<Record> records = new ArrayList<>();
+        final List<Segment> closed = new ArrayList<>();
         private final int segmentSize;
 
         MyStore(int segmentSize) {
@@ -258,8 +265,7 @@ public class AbstractStoreTest {
             } else if (event instanceof MessagePart) {
                 handleMessagePart((MessagePart) event);
             } else if (event instanceof SegmentCreated) {
-                segments.add(((SegmentCreated) event).segment);
-                System.out.println("segment created and added to segments");
+                handleSegmentCreated((SegmentCreated) event);
             }
         }
 
@@ -273,6 +279,15 @@ public class AbstractStoreTest {
         Segment createSegment(long positionGlobal) {
             return new Segment(new File("target/" + positionGlobal), positionGlobal);
         }
-    }
 
+        @Override
+        void addSegment(Segment segment) {
+            segments.add(segment);
+        }
+
+        @Override
+        void closeWriteSegment() {
+            closed.add(writeSegment());
+        }
+    }
 }

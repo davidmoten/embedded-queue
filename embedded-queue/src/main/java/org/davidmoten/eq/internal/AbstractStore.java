@@ -41,6 +41,11 @@ public abstract class AbstractStore {
     abstract void send(Event event1, Event event2);
 
     abstract Segment createSegment(long positionGlobal);
+    
+    // call from drain thread only
+    abstract void addSegment(Segment segment);
+    
+    abstract void closeWriteSegment();
 
     public enum State {
         FIRST_PART, WRITTEN_LENGTH, WRITTEN_PADDING, WRITTEN_CONTENT;
@@ -61,6 +66,10 @@ public abstract class AbstractStore {
 
     public final void handleSegmentFull(SegmentFull event) {
         scheduler.scheduleDirect(new SegmentFullHandler(event));
+    }
+    
+    public void handleSegmentCreated(SegmentCreated event) {
+        addSegment(event.segment);
     }
 
     public final void handleMessagePart(MessagePart event) {
@@ -83,6 +92,7 @@ public abstract class AbstractStore {
 
         @Override
         public void run() {
+            closeWriteSegment();
             Segment segment = createSegment(writePositionGlobal);
             SegmentCreated event1 = new SegmentCreated(segment, segmentSize);
             if (event.messagePart == null) {
