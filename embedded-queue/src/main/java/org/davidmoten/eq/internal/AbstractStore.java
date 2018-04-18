@@ -65,10 +65,12 @@ public abstract class AbstractStore {
     private static final int LENGTH_BYTES = 4;
 
     public final void handleSegmentFull(SegmentFull event) {
+        // blocking operations must be scheduled on io scheduler
         scheduler.scheduleDirect(new SegmentFullHandler(event));
     }
     
     public void handleSegmentCreated(SegmentCreated event) {
+        // don't have to schedule this as is non-blocking
         addSegment(event.segment);
     }
 
@@ -78,6 +80,7 @@ public abstract class AbstractStore {
             send(new SegmentFull(event));
         } else {
             State entryState = this.state;
+            // blocking operations must be scheduled on io scheduler
             scheduler.scheduleDirect(new MessagePartHandler(event, entryPositionLocal, entryState));
         }
     }
