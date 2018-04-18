@@ -13,5 +13,5 @@ public interface Store {
 
     Completable add(Flowable<ByteBuffer> byteBuffers);
     
-    Flowable<ByteBuffer> read(long positionGlobal);
+    Flowable<Flowable<ByteBuffer>> read(long positionGlobal);
 }

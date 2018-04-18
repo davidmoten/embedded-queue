@@ -15,27 +15,28 @@ import io.reactivex.internal.queue.SpscLinkedArrayQueue;
 import io.reactivex.internal.subscriptions.SubscriptionHelper;
 import io.reactivex.internal.util.BackpressureHelper;
 
-public final class FlowableRead extends Flowable<ByteBuffer> {
+public final class FlowableRead extends Flowable<Object> {
 
-    private final FileSystemStore store;
+    private final StoreReader storeReader;
     private final long positionGlobal;
 
-    FlowableRead(FileSystemStore store, long positionGlobal) {
-        this.store = store;
+    FlowableRead(StoreReader storeReader, long positionGlobal) {
+        this.storeReader = storeReader;
         this.positionGlobal = positionGlobal;
     }
 
     @Override
-    protected void subscribeActual(Subscriber<? super ByteBuffer> subscriber) {
-        subscriber.onSubscribe(new ReadSubscription(subscriber, store, positionGlobal));
+    protected void subscribeActual(Subscriber<? super Object> subscriber) {
+        subscriber.onSubscribe(new ReadSubscription(subscriber, storeReader, positionGlobal));
     }
 
-    public static final class ReadSubscription extends AtomicInteger implements Subscription {
+    public static final class ReadSubscription extends AtomicInteger
+            implements Subscription, Reader {
 
         private static final long serialVersionUID = -4997944041440021717L;
 
-        private final Subscriber<? super ByteBuffer> subscriber;
-        private final FileSystemStore store;
+        private final Subscriber<? super Object> subscriber;
+        private final StoreReader storeReader;
         private final AtomicBoolean once = new AtomicBoolean();
         private final long positionGlobal;
         private final AtomicLong requested = new AtomicLong();
@@ -50,10 +51,10 @@ public final class FlowableRead extends Flowable<ByteBuffer> {
 
         private volatile boolean cancelled;
 
-        public ReadSubscription(Subscriber<? super ByteBuffer> subscriber, FileSystemStore store,
+        public ReadSubscription(Subscriber<? super Object> subscriber, StoreReader storeReader,
                 long positionGlobal) {
             this.subscriber = subscriber;
-            this.store = store;
+            this.storeReader = storeReader;
             this.positionGlobal = positionGlobal;
         }
 
@@ -61,13 +62,14 @@ public final class FlowableRead extends Flowable<ByteBuffer> {
         public void request(long n) {
             if (SubscriptionHelper.validate(n)) {
                 if (once.compareAndSet(false, true)) {
-                    store.send(new NewReader(this));
+                    storeReader.send(new NewReader(this));
                 }
                 BackpressureHelper.add(requested, n);
                 drain();
             }
         }
 
+        @Override
         public void batchFinished() {
             while (true) {
                 int s = state.get();
@@ -85,6 +87,7 @@ public final class FlowableRead extends Flowable<ByteBuffer> {
             }
         }
 
+        @Override
         public void available() {
             while (true) {
                 int s = state.get();
@@ -103,6 +106,7 @@ public final class FlowableRead extends Flowable<ByteBuffer> {
             drain();
         }
 
+        @Override
         public void notAvailable() {
             while (true) {
                 int s = state.get();
@@ -121,36 +125,28 @@ public final class FlowableRead extends Flowable<ByteBuffer> {
             drain();
         }
 
+        @Override
+        public long startPositionGlobal() {
+            return positionGlobal;
+        }
+
         private void drain() {
             if (getAndIncrement() == 0) {
                 int missed = 1;
                 while (true) {
-                    if (cancelled) {
-                        return;
-                    }
                     long r = requested.get();
                     long e = 0;
                     while (e != r) {
+                        if (cancelled) {
+                            return;
+                        }
                         Object o = queue.poll();
                         if (o == null) {
-                            while (true) {
-                                int s = state.get();
-                                if (s == NOT_REQUESTED_AVAILABLE) {
-                                    if (state.compareAndSet(s, REQUESTED_AVAILABLE)) {
-                                        store.requestBatch();
-                                        break;
-                                    }
-                                } else {
-                                    break;
-                                }
-                            }
+                            tryRequestBatch();
                             break;
                         } else {
                             e++;
-                            subscriber.onNext((ByteBuffer) o);
-                        }
-                        if (cancelled) {
-                            return;
+                            subscriber.onNext(o);
                         }
                     }
                     if (e != 0) {
@@ -164,12 +160,42 @@ public final class FlowableRead extends Flowable<ByteBuffer> {
             }
         }
 
+        private void tryRequestBatch() {
+            while (true) {
+                int s = state.get();
+                if (s == NOT_REQUESTED_AVAILABLE) {
+                    if (state.compareAndSet(s, REQUESTED_AVAILABLE)) {
+                        storeReader.requestBatch(this);
+                        break;
+                    }
+                } else {
+                    break;
+                }
+            }
+        }
+
         @Override
         public void cancel() {
             cancelled = true;
-            // TODO remove reader from Store
+            storeReader.cancel(this);
         }
 
-    }
+        @Override
+        public void messagePart(ByteBuffer bb) {
+            queue.offer(bb);
+            drain();
+        }
 
+        @Override
+        public void messageFinished() {
+            // anything that is not a ByteBuffer will be used to delimit groups
+            queue.offer(0);
+            drain();
+        }
+
+        @Override
+        public void messageError(Throwable error) {
+            // TODO
+        }
+    }
 }

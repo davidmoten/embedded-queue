@@ -5,7 +5,11 @@ import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.RandomAccessFile;
 import java.nio.ByteBuffer;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedList;
+import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import org.davidmoten.eq.IORuntimeException;
@@ -31,7 +35,7 @@ import io.reactivex.disposables.Disposable;
 import io.reactivex.internal.fuseable.SimplePlainQueue;
 import io.reactivex.internal.queue.MpscLinkedQueue;
 
-public final class FileSystemStore extends Completable implements Store, StoreWriter {
+public final class FileSystemStore extends Completable implements Store, StoreWriter, StoreReader {
 
     final LinkedList<Segment> segments = new LinkedList<>();
     final int segmentSize;
@@ -50,6 +54,8 @@ public final class FileSystemStore extends Completable implements Store, StoreWr
     private Flowable<Part> source;
     private Subscription sourceSubscription;
     private CompletableObserver child;
+    private final Map<Reader, ReaderInfo> readers = new HashMap<>();
+    private final Set<Reader> readyToRead = new HashSet<>();
 
     public FileSystemStore(File directory, int segmentSize, Scheduler io) {
         this.directory = directory;
@@ -155,16 +161,15 @@ public final class FileSystemStore extends Completable implements Store, StoreWr
             writeHandler.handleSegmentCreated((SegmentCreated) event);
         } else if (event instanceof Part) {
             writeHandler.handlePart((MessagePart) event);
-        } else if (event instanceof PartWritten) { 
-           sourceSubscription.request(1);
-        }
-        else if (event instanceof EndWritten) {
+        } else if (event instanceof PartWritten) {
+            sourceSubscription.request(1);
+        } else if (event instanceof EndWritten) {
             emitComplete();
         }
     }
 
     @Override
-    public  void errorOccurred(Throwable e) {
+    public void errorOccurred(Throwable e) {
         child.onError(e);
     }
 
@@ -185,7 +190,8 @@ public final class FileSystemStore extends Completable implements Store, StoreWr
         return file;
     }
 
-    private static void createFixedLengthFile(File file, long segmentSize) throws FileNotFoundException, IOException {
+    private static void createFixedLengthFile(File file, long segmentSize)
+            throws FileNotFoundException, IOException {
         RandomAccessFile f = new RandomAccessFile(file, "rw");
         f.setLength(segmentSize);
         f.close();
@@ -276,14 +282,32 @@ public final class FileSystemStore extends Completable implements Store, StoreWr
         segment.closeForWrite();
     }
 
+    @SuppressWarnings("unchecked")
     @Override
-    public Flowable<ByteBuffer> read(long positionGlobal) {
-        return new FlowableRead(this, positionGlobal);
+    public Flowable<Flowable<ByteBuffer>> read(long positionGlobal) {
+        FlowableRead f = new FlowableRead(this, positionGlobal);
+        return Flowable.defer(() -> {
+            long[] count = new long[1];
+            return f.groupBy(x -> count[0]) //
+                    .map(g -> (Flowable<ByteBuffer>) (Flowable<?>) g
+                            .takeWhile(x -> x instanceof ByteBuffer));
+        });
     }
 
-    public void requestBatch() {
+    @Override
+    public void requestBatch(Reader reader) {
         // TODO Auto-generated method stub
-        
+
+    }
+
+    @Override
+    public void cancel(Reader reader) {
+        // TODO Auto-generated method stub
+
+    }
+
+    private static final class ReaderInfo {
+
     }
 
 }
