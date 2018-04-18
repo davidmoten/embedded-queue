@@ -1,13 +1,10 @@
 package org.davidmoten.eq.internal.event;
 
-import java.nio.ByteBuffer;
-
-import org.davidmoten.eq.internal.event.Event;
-import org.reactivestreams.Subscriber;
+import org.davidmoten.eq.internal.FlowableRead.ReadSubscription;
 
 public class NewReader implements Event {
 
-    public NewReader(Subscriber<? super ByteBuffer> subscriber, long positionGlobal) {
+    public NewReader(ReadSubscription readSubscription) {
         // TODO Auto-generated constructor stub
     }
 
