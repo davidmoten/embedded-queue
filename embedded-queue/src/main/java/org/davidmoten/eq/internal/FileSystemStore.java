@@ -14,18 +14,21 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import org.davidmoten.eq.IORuntimeException;
 import org.davidmoten.eq.Store;
+import org.davidmoten.eq.internal.event.CancelReader;
 import org.davidmoten.eq.internal.event.EndWritten;
 import org.davidmoten.eq.internal.event.Event;
 import org.davidmoten.eq.internal.event.MessageEnd;
 import org.davidmoten.eq.internal.event.MessagePart;
 import org.davidmoten.eq.internal.event.Part;
 import org.davidmoten.eq.internal.event.PartWritten;
+import org.davidmoten.eq.internal.event.RequestBatch;
 import org.davidmoten.eq.internal.event.SegmentCreated;
 import org.davidmoten.eq.internal.event.SegmentFull;
 import org.reactivestreams.Subscriber;
 import org.reactivestreams.Subscription;
 
 import com.github.davidmoten.guavamini.Preconditions;
+import com.github.davidmoten.guavamini.annotations.VisibleForTesting;
 
 import io.reactivex.Completable;
 import io.reactivex.CompletableObserver;
@@ -282,28 +285,35 @@ public final class FileSystemStore extends Completable implements Store, StoreWr
         segment.closeForWrite();
     }
 
-    @SuppressWarnings("unchecked")
     @Override
     public Flowable<Flowable<ByteBuffer>> read(long positionGlobal) {
-        FlowableRead f = new FlowableRead(this, positionGlobal);
+        return group(new FlowableRead(this, positionGlobal));
+    }
+
+    @SuppressWarnings("unchecked")
+    @VisibleForTesting
+    // TODO unit test
+    static Flowable<Flowable<ByteBuffer>> group(FlowableRead f) {
         return Flowable.defer(() -> {
             long[] count = new long[1];
             return f.groupBy(x -> count[0]) //
                     .map(g -> (Flowable<ByteBuffer>) (Flowable<?>) g
-                            .takeWhile(x -> x instanceof ByteBuffer));
+                            .takeWhile(x -> x instanceof ByteBuffer)
+                            .doOnComplete(() -> count[0]++));
         });
     }
 
     @Override
     public void requestBatch(Reader reader) {
-        // TODO Auto-generated method stub
+        queue.offer(new RequestBatch(reader));
+        drain();
 
     }
 
     @Override
     public void cancel(Reader reader) {
-        // TODO Auto-generated method stub
-
+        queue.offer(new CancelReader(reader));
+        drain();
     }
 
     private static final class ReaderInfo {
