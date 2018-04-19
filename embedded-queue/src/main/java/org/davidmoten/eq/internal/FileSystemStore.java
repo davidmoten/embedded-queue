@@ -45,7 +45,8 @@ public final class FileSystemStore extends Completable implements Store, StoreWr
     final int segmentSize;
     final Scheduler io;
     final File directory;
-    final WriteHandler writeHandler;
+    private final WriteHandler writeHandler;
+    final ReadHandler readHandler;
 
     private final AtomicInteger wip = new AtomicInteger();
 
@@ -60,12 +61,14 @@ public final class FileSystemStore extends Completable implements Store, StoreWr
     private CompletableObserver child;
     private final Map<Reader, ReaderInfo> readers = new HashMap<>();
     private final Set<Reader> reading = new HashSet<>();
+    
 
     public FileSystemStore(File directory, int segmentSize, Scheduler io) {
         this.directory = directory;
         this.segmentSize = segmentSize;
         this.io = io;
         this.writeHandler = new WriteHandler(this, segmentSize, io);
+        this.readHandler = new ReadHandler(this);
     }
 
     public Completable add(byte[] bytes) {
@@ -171,10 +174,12 @@ public final class FileSystemStore extends Completable implements Store, StoreWr
             emitComplete();
         } else if (event instanceof RequestBatch) {
             RequestBatch r = (RequestBatch) event;
-            if (!readers.containsKey(r)) {
-                readers.put(r.reader, new ReaderInfo(r.reader));
-                reading.add(r.reader);
+            Reader reader = r.reader;
+            if (!readers.containsKey(reader)) {
+                readers.put(reader, new ReaderInfo(reader));
+                reading.add(reader);
             }
+            readHandler.handleRequestBatch(r);
         } else if (event instanceof BatchFinished) {
             reading.remove(((BatchFinished) event).reader);
         }
