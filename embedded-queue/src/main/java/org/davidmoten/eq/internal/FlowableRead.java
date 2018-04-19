@@ -42,10 +42,10 @@ public final class FlowableRead extends Flowable<Object> {
         private final AtomicLong requested = new AtomicLong();
         private final SimplePlainQueue<Object> queue = new SpscLinkedArrayQueue<Object>(16);
 
-        private static final int NOT_REQUESTED_NOT_AVAILABLE = 0;
+        private static final int REQUESTED_AVAILABLE = 0;
         private static final int REQUESTED_NOT_AVAILABLE = 1;
         private static final int NOT_REQUESTED_AVAILABLE = 2;
-        private static final int REQUESTED_AVAILABLE = 3;
+        private static final int NOT_REQUESTED_NOT_AVAILABLE = 3;
 
         private final AtomicInteger state = new AtomicInteger();
 
@@ -61,9 +61,6 @@ public final class FlowableRead extends Flowable<Object> {
         @Override
         public void request(long n) {
             if (SubscriptionHelper.validate(n)) {
-                if (once.compareAndSet(false, true)) {
-                    storeReader.send(new NewReader(this));
-                }
                 BackpressureHelper.add(requested, n);
                 drain();
             }

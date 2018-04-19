@@ -92,8 +92,6 @@
     </scm>
 
     <modules>
-        <module>embedded-queue-definition</module>
-        <module>embedded-queue-generated</module>
-        <!-- <module>embedded-queue</module> -->
+        <module>embedded-queue</module>
     </modules>
 </project>

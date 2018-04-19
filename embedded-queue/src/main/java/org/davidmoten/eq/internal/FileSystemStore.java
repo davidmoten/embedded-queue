@@ -14,6 +14,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import org.davidmoten.eq.IORuntimeException;
 import org.davidmoten.eq.Store;
+import org.davidmoten.eq.internal.event.BatchFinished;
 import org.davidmoten.eq.internal.event.CancelReader;
 import org.davidmoten.eq.internal.event.EndWritten;
 import org.davidmoten.eq.internal.event.Event;
@@ -58,7 +59,7 @@ public final class FileSystemStore extends Completable implements Store, StoreWr
     private Subscription sourceSubscription;
     private CompletableObserver child;
     private final Map<Reader, ReaderInfo> readers = new HashMap<>();
-    private final Set<Reader> readyToRead = new HashSet<>();
+    private final Set<Reader> reading = new HashSet<>();
 
     public FileSystemStore(File directory, int segmentSize, Scheduler io) {
         this.directory = directory;
@@ -168,6 +169,14 @@ public final class FileSystemStore extends Completable implements Store, StoreWr
             sourceSubscription.request(1);
         } else if (event instanceof EndWritten) {
             emitComplete();
+        } else if (event instanceof RequestBatch) {
+            RequestBatch r = (RequestBatch) event;
+            if (!readers.containsKey(r)) {
+                readers.put(r.reader, new ReaderInfo(r.reader));
+                reading.add(r.reader);
+            }
+        } else if (event instanceof BatchFinished) {
+            reading.remove(((BatchFinished) event).reader);
         }
     }
 
@@ -193,11 +202,16 @@ public final class FileSystemStore extends Completable implements Store, StoreWr
         return file;
     }
 
-    private static void createFixedLengthFile(File file, long segmentSize)
-            throws FileNotFoundException, IOException {
+    private static void createFixedLengthFile(File file, long segmentSize) throws FileNotFoundException, IOException {
         RandomAccessFile f = new RandomAccessFile(file, "rw");
         f.setLength(segmentSize);
         f.close();
+    }
+
+    @Override
+    public void send(Event event) {
+        queue.offer(event);
+        drain();
     }
 
     @Override
@@ -266,11 +280,6 @@ public final class FileSystemStore extends Completable implements Store, StoreWr
     }
 
     @Override
-    public void send(Event event) {
-        queue.offer(event);
-    }
-
-    @Override
     public Segment createSegment(long positionGlobal) {
         return new Segment(nextFile(positionGlobal), positionGlobal);
     }
@@ -297,8 +306,7 @@ public final class FileSystemStore extends Completable implements Store, StoreWr
         return Flowable.defer(() -> {
             long[] count = new long[1];
             return f.groupBy(x -> count[0]) //
-                    .map(g -> (Flowable<ByteBuffer>) (Flowable<?>) g
-                            .takeWhile(x -> x instanceof ByteBuffer)
+                    .map(g -> (Flowable<ByteBuffer>) (Flowable<?>) g.takeWhile(x -> x instanceof ByteBuffer)
                             .doOnComplete(() -> count[0]++));
         });
     }
@@ -318,6 +326,14 @@ public final class FileSystemStore extends Completable implements Store, StoreWr
 
     private static final class ReaderInfo {
 
+        public final Reader reader;
+        // mutable
+        public long readPositionGlobal;
+
+        public ReaderInfo(Reader reader) {
+            this.reader = reader;
+            this.readPositionGlobal = reader.startPositionGlobal();
+        }
     }
 
 }
