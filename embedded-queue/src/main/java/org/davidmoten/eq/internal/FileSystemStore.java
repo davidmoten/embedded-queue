@@ -9,6 +9,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedList;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -59,7 +60,7 @@ public final class FileSystemStore extends Completable implements Store, StoreWr
     private Flowable<Part> source;
     private Subscription sourceSubscription;
     private CompletableObserver child;
-    private final Map<Reader, ReaderInfo> readers = new HashMap<>();
+    private final Map<Reader, ReaderState> readers = new HashMap<>();
     private final Set<Reader> reading = new HashSet<>();
     
 
@@ -68,7 +69,7 @@ public final class FileSystemStore extends Completable implements Store, StoreWr
         this.segmentSize = segmentSize;
         this.io = io;
         this.writeHandler = new WriteHandler(this, segmentSize, io);
-        this.readHandler = new ReadHandler(this);
+        this.readHandler = new ReadHandler(this, io);
     }
 
     public Completable add(byte[] bytes) {
@@ -173,13 +174,7 @@ public final class FileSystemStore extends Completable implements Store, StoreWr
         } else if (event instanceof EndWritten) {
             emitComplete();
         } else if (event instanceof RequestBatch) {
-            RequestBatch r = (RequestBatch) event;
-            Reader reader = r.reader;
-            if (!readers.containsKey(reader)) {
-                readers.put(reader, new ReaderInfo(reader));
-                reading.add(reader);
-            }
-            readHandler.handleRequestBatch(r);
+            readHandler.handleRequestBatch((RequestBatch) event);
         } else if (event instanceof BatchFinished) {
             reading.remove(((BatchFinished) event).reader);
         }
@@ -329,16 +324,34 @@ public final class FileSystemStore extends Completable implements Store, StoreWr
         drain();
     }
 
-    private static final class ReaderInfo {
+    public static final class ReaderState {
 
         public final Reader reader;
         // mutable
         public long readPositionGlobal;
 
-        public ReaderInfo(Reader reader) {
+        public ReaderState(Reader reader) {
             this.reader = reader;
             this.readPositionGlobal = reader.startPositionGlobal();
         }
+    }
+
+    @Override
+    public ReaderState state(Reader reader) {
+        if (!readers.containsKey(reader)) {
+            readers.put(reader,  new ReaderState(reader));
+        }
+        return readers.get(reader);
+    }
+
+    @Override
+    public Optional<Segment> segment(long positionGlobal) {
+        for (Segment segment : segments) {
+            if (positionGlobal < segment.start + segmentSize) {
+                return Optional.of(segment);
+            }
+        }
+        return Optional.empty();
     }
 
 }

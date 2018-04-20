@@ -1,16 +1,25 @@
 package org.davidmoten.eq.internal;
 
+import java.util.Optional;
+
+import org.davidmoten.eq.internal.FileSystemStore.ReaderState;
 import org.davidmoten.eq.internal.event.RequestBatch;
 
-public class ReadHandler {
+import io.reactivex.Scheduler;
 
-    public ReadHandler(StoreReader storeReader) {
-        // TODO Auto-generated constructor stub
+public final class ReadHandler {
+
+    private final StoreReader storeReader;
+    private final Scheduler scheduler;
+
+    public ReadHandler(StoreReader storeReader, Scheduler scheduler) {
+        this.storeReader = storeReader;
+        this.scheduler = scheduler;
     }
 
     public void handleRequestBatch(RequestBatch r) {
-        // TODO Auto-generated method stub
-        
+        ReaderState state = storeReader.state(r.reader);       
+        Optional<Segment> segment = storeReader.segment(state.readPositionGlobal);
     }
 
 }
