@@ -171,7 +171,7 @@ public class WriteHandlerTest {
         assertEquals(create(segment2, 0, Arrays.copyOfRange(msg, 0, 8)), r.next()); // write msg (2 bytes)
         assertEquals(create(segment3, 0, Arrays.copyOfRange(msg, 8, 16)), r.next()); // write msg (2 bytes)
         assertEquals(create(segment4, 0, (int) c.getValue()), r.next()); // write checksum
-        assertEquals(create(segment4, 4, (int) 0), r.next()); // write checksum
+        assertEquals(create(segment4, 4, (int) 0), r.next()); // write zero length to next record
         assertEquals(create(segment1, 0, 16), r.next()); // rewrite length of message, now ready for
                                                         // readers
         assertFalse(r.hasNext());
