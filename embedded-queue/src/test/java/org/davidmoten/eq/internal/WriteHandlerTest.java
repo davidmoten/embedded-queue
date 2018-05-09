@@ -1,6 +1,7 @@
 package org.davidmoten.eq.internal;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
@@ -9,6 +10,7 @@ import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.Iterator;
 import java.util.List;
 import java.util.zip.CRC32;
 import java.util.zip.Checksum;
@@ -143,11 +145,11 @@ public class WriteHandlerTest {
     }
     
     @Test
-    public void testHandleMessagePartContentSplitAcrossThreeSegments() {
+    public void testHandleMessagePartContentSplitAcrossFourSegments() {
         MyStore store = new MyStore(8);
         store.writeHandler.state = State.FIRST_PART;
 
-        // 6 bytes, 2 of which will be written to first segment
+        // 16 bytes, 2 of which will be written to first segment
         // and the other 4 will be at the start of the second segment
         byte[] msg = "1234567890123456".getBytes();
         store.writeHandler.handlePart(new MessagePart(ByteBuffer.wrap(msg)));
@@ -158,18 +160,22 @@ public class WriteHandlerTest {
         Segment segment1 = store.segments.get(0);
         Segment segment2 = store.segments.get(1);
         Segment segment3 = store.segments.get(2);
-        List<Record> r = store.records;
+        Segment segment4 = store.segments.get(3);
+        Iterator<Record> r = store.records.iterator();
         System.out.println(store.segments);
-        assertEquals(create(segment1, 0, 0), r.get(0)); // write zero length
-        assertEquals(create(segment1, 4, (byte) 3), r.get(1)); // write padding length
-        assertEquals(create(segment1, 5, (byte) 0), r.get(2)); // write padding
-        assertEquals(create(segment1, 6, Arrays.copyOfRange(msg, 0, 2)), r.get(3)); // write msg (2 bytes)
-        assertEquals(create(segment2, 0, Arrays.copyOfRange(msg, 2, 6)), r.get(4)); // write msg (2 bytes)
-        assertEquals(create(segment2, 4, (int) c.getValue()), r.get(5)); // write checksum
-        assertEquals(create(segment1, 0, 6), r.get(6)); // rewrite length of message, now ready for
+        assertEquals(create(segment1, 0, 0), r.next()); // write zero length
+        assertEquals(create(segment1, 4, (byte) 3), r.next()); // write padding length
+        assertEquals(create(segment1, 5, (byte) 0), r.next()); // write padding
+        assertEquals(create(segment1, 6, (byte) 0), r.next()); // write padding
+        assertEquals(create(segment1, 7, (byte) 0), r.next()); // write padding
+        assertEquals(create(segment2, 0, Arrays.copyOfRange(msg, 0, 8)), r.next()); // write msg (2 bytes)
+        assertEquals(create(segment3, 0, Arrays.copyOfRange(msg, 8, 16)), r.next()); // write msg (2 bytes)
+        assertEquals(create(segment4, 0, (int) c.getValue()), r.next()); // write checksum
+        assertEquals(create(segment4, 4, (int) 0), r.next()); // write checksum
+        assertEquals(create(segment1, 0, 16), r.next()); // rewrite length of message, now ready for
                                                         // readers
-        assertEquals(7, r.size());
-        assertEquals(Collections.singletonList(segment1), store.closed);
+        assertFalse(r.hasNext());
+        assertEquals(Arrays.asList(segment2, segment3, segment1), store.closed);
     }
 
     private static Record create(Segment segment, int positionLocal, Object o) {
