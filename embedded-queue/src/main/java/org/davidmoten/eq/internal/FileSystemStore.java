@@ -315,7 +315,6 @@ public final class FileSystemStore extends Completable implements Store, StoreWr
     public void requestBatch(Reader reader) {
         queue.offer(new RequestBatch(reader));
         drain();
-
     }
 
     @Override

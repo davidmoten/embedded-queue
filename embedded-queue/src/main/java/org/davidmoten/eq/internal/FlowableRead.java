@@ -1,7 +1,6 @@
 package org.davidmoten.eq.internal;
 
 import java.nio.ByteBuffer;
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -14,6 +13,11 @@ import io.reactivex.internal.queue.SpscLinkedArrayQueue;
 import io.reactivex.internal.subscriptions.SubscriptionHelper;
 import io.reactivex.internal.util.BackpressureHelper;
 
+/**
+ * Emits ByteBuffer items except for terminating objects so that we know where
+ * to break (group by).
+ *
+ */
 public final class FlowableRead extends Flowable<Object> {
 
     private final StoreReader storeReader;
@@ -29,16 +33,18 @@ public final class FlowableRead extends Flowable<Object> {
         subscriber.onSubscribe(new ReadSubscription(subscriber, storeReader, positionGlobal));
     }
 
-    public static final class ReadSubscription extends AtomicInteger
-            implements Subscription, Reader {
+    public static final class ReadSubscription extends AtomicInteger implements Subscription, Reader {
 
         private static final long serialVersionUID = -4997944041440021717L;
 
         private final Subscriber<? super Object> subscriber;
         private final StoreReader storeReader;
-        private final AtomicBoolean once = new AtomicBoolean();
         private final long positionGlobal;
         private final AtomicLong requested = new AtomicLong();
+
+        // synchronized by wip (this)
+        private long emitted;
+
         private final SimplePlainQueue<Object> queue = new SpscLinkedArrayQueue<Object>(16);
 
         private static final int REQUESTED_AVAILABLE = 0;
@@ -50,8 +56,7 @@ public final class FlowableRead extends Flowable<Object> {
 
         private volatile boolean cancelled;
 
-        public ReadSubscription(Subscriber<? super Object> subscriber, StoreReader storeReader,
-                long positionGlobal) {
+        public ReadSubscription(Subscriber<? super Object> subscriber, StoreReader storeReader, long positionGlobal) {
             this.subscriber = subscriber;
             this.storeReader = storeReader;
             this.positionGlobal = positionGlobal;
@@ -131,7 +136,7 @@ public final class FlowableRead extends Flowable<Object> {
                 int missed = 1;
                 while (true) {
                     long r = requested.get();
-                    long e = 0;
+                    long e = emitted;
                     while (e != r) {
                         if (cancelled) {
                             return;
@@ -145,9 +150,7 @@ public final class FlowableRead extends Flowable<Object> {
                             subscriber.onNext(o);
                         }
                     }
-                    if (e != 0) {
-                        BackpressureHelper.produced(requested, e);
-                    }
+                    emitted = e;
                     missed = addAndGet(-missed);
                     if (missed == 0) {
                         return;

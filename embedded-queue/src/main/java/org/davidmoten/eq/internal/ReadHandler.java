@@ -20,6 +20,9 @@ public final class ReadHandler {
     public void handleRequestBatch(RequestBatch r) {
         ReaderState state = storeReader.state(r.reader);       
         Optional<Segment> segment = storeReader.segment(state.readPositionGlobal);
+        if (segment.isPresent()) {
+            
+        }
     }
 
 }
