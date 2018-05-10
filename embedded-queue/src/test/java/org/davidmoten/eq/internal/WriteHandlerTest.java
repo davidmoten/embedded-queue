@@ -33,18 +33,18 @@ public class WriteHandlerTest {
 
     @Test
     public void testHandleMessagePartUsePartSegment() {
-        MyStore store = new MyStore(100);
+        final MyStore store = new MyStore(100);
         store.writeHandler.state = State.FIRST_PART;
-        byte[] msg = "hi".getBytes();
-        int start = 4;
+        final byte[] msg = "hi".getBytes();
+        final int start = 4;
         store.writeHandler.writePositionGlobal = start;
         store.writeHandler.handlePart(new MessagePart(ByteBuffer.wrap(msg)));
         store.writeHandler.handlePart(MessageEnd.instance());
         store.records.stream().forEach(System.out::println);
-        Checksum c = new CRC32();
+        final Checksum c = new CRC32();
         c.update(msg, 0, msg.length);
-        Segment segment = store.writeSegment();
-        List<Record> r = store.records;
+        final Segment segment = store.writeSegment();
+        final List<Record> r = store.records;
         assertEquals(create(segment, start + 0, 0), r.get(0)); // write zero length
         assertEquals(create(segment, start + 4, (byte) 1), r.get(1)); // write padding length
         assertEquals(create(segment, start + 5, (byte) 0), r.get(2)); // write padding
@@ -62,16 +62,16 @@ public class WriteHandlerTest {
 
     @Test
     public void testHandleMessagePartUseWholeSegment() {
-        MyStore store = new MyStore(12);
+        final MyStore store = new MyStore(12);
         store.writeHandler.state = State.FIRST_PART;
-        byte[] msg = "hi".getBytes();
+        final byte[] msg = "hi".getBytes();
         store.writeHandler.handlePart(new MessagePart(ByteBuffer.wrap(msg)));
         store.writeHandler.handlePart(MessageEnd.instance());
         store.records.stream().forEach(System.out::println);
-        Checksum c = new CRC32();
+        final Checksum c = new CRC32();
         c.update(msg, 0, msg.length);
-        Segment segment = store.writeSegment();
-        List<Record> r = store.records;
+        final Segment segment = store.writeSegment();
+        final List<Record> r = store.records;
         assertEquals(create(segment, 0, 0), r.get(0)); // write zero length
         assertEquals(create(segment, 4, (byte) 1), r.get(1)); // write padding length
         assertEquals(create(segment, 5, (byte) 0), r.get(2)); // write padding
@@ -90,17 +90,17 @@ public class WriteHandlerTest {
 
     @Test
     public void testHandleMessagePartChecksumInNextSegment() {
-        MyStore store = new MyStore(8);
+        final MyStore store = new MyStore(8);
         store.writeHandler.state = State.FIRST_PART;
-        byte[] msg = "hi".getBytes();
+        final byte[] msg = "hi".getBytes();
         store.writeHandler.handlePart(new MessagePart(ByteBuffer.wrap(msg)));
         store.writeHandler.handlePart(MessageEnd.instance());
         store.records.stream().forEach(System.out::println);
-        Checksum c = new CRC32();
+        final Checksum c = new CRC32();
         c.update(msg, 0, msg.length);
-        Segment segment1 = store.segments.get(0);
-        Segment segment2 = store.segments.get(1);
-        List<Record> r = store.records;
+        final Segment segment1 = store.segments.get(0);
+        final Segment segment2 = store.segments.get(1);
+        final List<Record> r = store.records;
         System.out.println(store.segments);
         assertEquals(create(segment1, 0, 0), r.get(0)); // write zero length
         assertEquals(create(segment1, 4, (byte) 1), r.get(1)); // write padding length
@@ -117,20 +117,20 @@ public class WriteHandlerTest {
 
     @Test
     public void testHandleMessagePartContentSplitAcrossTwoSegments() {
-        MyStore store = new MyStore(8);
+        final MyStore store = new MyStore(8);
         store.writeHandler.state = State.FIRST_PART;
 
         // 6 bytes, 2 of which will be written to first segment
         // and the other 4 will be at the start of the second segment
-        byte[] msg = "hi1234".getBytes();
+        final byte[] msg = "hi1234".getBytes();
         store.writeHandler.handlePart(new MessagePart(ByteBuffer.wrap(msg)));
         store.writeHandler.handlePart(MessageEnd.instance());
         store.records.stream().forEach(System.out::println);
-        Checksum c = new CRC32();
+        final Checksum c = new CRC32();
         c.update(msg, 0, msg.length);
-        Segment segment1 = store.segments.get(0);
-        Segment segment2 = store.segments.get(1);
-        List<Record> r = store.records;
+        final Segment segment1 = store.segments.get(0);
+        final Segment segment2 = store.segments.get(1);
+        final List<Record> r = store.records;
         System.out.println(store.segments);
         assertEquals(create(segment1, 0, 0), r.get(0)); // write zero length
         assertEquals(create(segment1, 4, (byte) 1), r.get(1)); // write padding length
@@ -143,25 +143,57 @@ public class WriteHandlerTest {
         assertEquals(7, r.size());
         assertEquals(Collections.singletonList(segment1), store.closed);
     }
-    
+
+    @Test
+    public void testWriteDelimiterAfterEveryRecord() {
+        final MyStore store = new MyStore(200, 1);
+        store.writeHandler.state = State.FIRST_PART;
+        final byte[] msg = "hi".getBytes();
+        final int start = 4;
+        store.writeHandler.writePositionGlobal = start;
+        store.writeHandler.handlePart(new MessagePart(ByteBuffer.wrap(msg)));
+        store.writeHandler.handlePart(MessageEnd.instance());
+        store.records.stream().forEach(System.out::println);
+        final Checksum c = new CRC32();
+        c.update(msg, 0, msg.length);
+        final Segment segment = store.writeSegment();
+        final List<Record> r = store.records;
+        assertEquals(create(segment, start + 0, 0), r.get(0)); // write zero length
+        assertEquals(create(segment, start + 4, (byte) 1), r.get(1)); // write padding length
+        assertEquals(create(segment, start + 5, (byte) 0), r.get(2)); // write padding
+        assertEquals(create(segment, start + 6, msg), r.get(3)); // write msg
+        assertEquals(create(segment, start + 8, (int) c.getValue()), r.get(4)); // write checksum
+        assertEquals(create(segment, start + 12, 0), r.get(5)); // write length of next record as
+        assertEquals(create(segment, start + 0, 2), r.get(6)); // rewrite length of message, now ready for readers
+        assertEquals(create(segment, start + 12, 0), r.get(7)); // write length of next record as
+        // zero for delimiter
+
+        assertEquals(create(segment, start + 16, Delimiter.REMAINING), r.get(8)); // rewrite length of message, now
+        assertEquals(create(segment, start + 12, Delimiter.START), r.get(9)); // rewrite length of message, now
+        // ready for readers
+        assertEquals(10, r.size());
+        assertTrue(store.closed.isEmpty());
+        assertNull(store.error);
+    }
+
     @Test
     public void testHandleMessagePartContentSplitAcrossFourSegments() {
-        MyStore store = new MyStore(8);
+        final MyStore store = new MyStore(8);
         store.writeHandler.state = State.FIRST_PART;
 
         // 16 bytes, 2 of which will be written to first segment
         // and the other 4 will be at the start of the second segment
-        byte[] msg = "1234567890123456".getBytes();
+        final byte[] msg = "1234567890123456".getBytes();
         store.writeHandler.handlePart(new MessagePart(ByteBuffer.wrap(msg)));
         store.writeHandler.handlePart(MessageEnd.instance());
         store.records.stream().forEach(System.out::println);
-        Checksum c = new CRC32();
+        final Checksum c = new CRC32();
         c.update(msg, 0, msg.length);
-        Segment segment1 = store.segments.get(0);
-        Segment segment2 = store.segments.get(1);
-        Segment segment3 = store.segments.get(2);
-        Segment segment4 = store.segments.get(3);
-        Iterator<Record> r = store.records.iterator();
+        final Segment segment1 = store.segments.get(0);
+        final Segment segment2 = store.segments.get(1);
+        final Segment segment3 = store.segments.get(2);
+        final Segment segment4 = store.segments.get(3);
+        final Iterator<Record> r = store.records.iterator();
         System.out.println(store.segments);
         assertEquals(create(segment1, 0, 0), r.next()); // write zero length
         assertEquals(create(segment1, 4, (byte) 3), r.next()); // write padding length
@@ -171,9 +203,9 @@ public class WriteHandlerTest {
         assertEquals(create(segment2, 0, Arrays.copyOfRange(msg, 0, 8)), r.next()); // write msg (2 bytes)
         assertEquals(create(segment3, 0, Arrays.copyOfRange(msg, 8, 16)), r.next()); // write msg (2 bytes)
         assertEquals(create(segment4, 0, (int) c.getValue()), r.next()); // write checksum
-        assertEquals(create(segment4, 4, (int) 0), r.next()); // write zero length to next record
+        assertEquals(create(segment4, 4, 0), r.next()); // write zero length to next record
         assertEquals(create(segment1, 0, 16), r.next()); // rewrite length of message, now ready for
-                                                        // readers
+                                                         // readers
         assertFalse(r.hasNext());
         assertEquals(Arrays.asList(segment2, segment3, segment1), store.closed);
     }
@@ -213,7 +245,7 @@ public class WriteHandlerTest {
                 return false;
             if (getClass() != obj.getClass())
                 return false;
-            Record other = (Record) obj;
+            final Record other = (Record) obj;
             if (object == null) {
                 if (other.object != null)
                     return false;
@@ -264,9 +296,13 @@ public class WriteHandlerTest {
         private final int segmentSize;
 
         MyStore(int segmentSize) {
+            this(segmentSize, 0);
+        }
+
+        MyStore(int segmentSize, int delimitEvery) {
             this.segmentSize = segmentSize;
             Preconditions.checkArgument(segmentSize % 4 == 0);
-            this.writeHandler = new WriteHandler(this, segmentSize, Schedulers.trampoline());
+            this.writeHandler = new WriteHandler(this, segmentSize, delimitEvery, Schedulers.trampoline());
         }
 
         @Override
@@ -293,8 +329,8 @@ public class WriteHandlerTest {
         @Override
         public void write(int positionLocal, ByteBuffer bb, int length) {
             checkPositionLocal(positionLocal);
-            byte[] bytes = new byte[length];
-            int p = bb.position();
+            final byte[] bytes = new byte[length];
+            final int p = bb.position();
             bb.get(bytes);
             bb.position(p);
             records.add(new Record(writeSegment(), positionLocal, bytes));

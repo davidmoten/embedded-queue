@@ -22,16 +22,18 @@ public final class WriteHandler {
     private final int segmentSize;
     private final Scheduler scheduler;
     private final StoreWriter storeWriter;
+    private final int delimitEvery;
+    private int messageCount;
 
-    public WriteHandler(StoreWriter storeWriter, int segmentSize, Scheduler scheduler) {
+    public WriteHandler(StoreWriter storeWriter, int segmentSize, int delimitEvery, Scheduler scheduler) {
         this.storeWriter = storeWriter;
         this.segmentSize = segmentSize;
+        this.delimitEvery = delimitEvery;
         this.scheduler = scheduler;
-
     }
 
     public enum State {
-        FIRST_PART, WRITTEN_LENGTH, WRITING_CONTENT, WRITTEN_CONTENT;
+        FIRST_PART, WRITTEN_LENGTH, WRITING_CONTENT, WRITTEN_CONTENT, WRITING_DELIMITER;
     }
 
     private final Checksum checksum = new CRC32();
@@ -55,6 +57,12 @@ public final class WriteHandler {
 
     int messageStartPositionLocal;
 
+    ByteBuffer delimiterBb = ByteBuffer.wrap(Delimiter.BYTES);
+    
+    int delimiterStartPositionLocal;
+    
+    Segment delimiterStartSegment;
+
     State state = State.FIRST_PART;
 
     private static final int CHECKSUM_BYTES = 4;
@@ -76,7 +84,7 @@ public final class WriteHandler {
         if (entryPositionLocal == segmentSize) {
             storeWriter.send(new SegmentFull(event));
         } else {
-            State entryState = this.state;
+            final State entryState = this.state;
             // blocking operations must be scheduled on io scheduler
             scheduler.scheduleDirect(new PartHandler(event, entryPositionLocal, entryState));
         }
@@ -96,14 +104,14 @@ public final class WriteHandler {
                 if (messageStartSegment != storeWriter.writeSegment()) {
                     storeWriter.closeForWrite(storeWriter.writeSegment());
                 }
-                Segment segment = storeWriter.createSegment(writePositionGlobal);
-                SegmentCreated event1 = new SegmentCreated(segment, segmentSize);
+                final Segment segment = storeWriter.createSegment(writePositionGlobal);
+                final SegmentCreated event1 = new SegmentCreated(segment, segmentSize);
                 if (event.part == null) {
                     storeWriter.send(event1);
                 } else {
                     storeWriter.send(event1, event.part);
                 }
-            } catch (Throwable e) {
+            } catch (final Throwable e) {
                 e.printStackTrace();
                 storeWriter.errorOccurred(e);
             }
@@ -127,7 +135,7 @@ public final class WriteHandler {
             try {
                 State state = entryState;
                 int positionLocal = entryPositionLocal;
-                Segment entryWriteSegment = storeWriter.writeSegment();
+                final Segment entryWriteSegment = storeWriter.writeSegment();
                 Event sendEvent = null;
                 boolean endWritten = false;
                 boolean partWritten = false;
@@ -137,6 +145,7 @@ public final class WriteHandler {
                         break;
                     }
                     if (state == State.FIRST_PART) {
+                        delimiterBb.position(0);
                         /////////////////////////////
                         // write length
                         /////////////////////////////
@@ -155,7 +164,7 @@ public final class WriteHandler {
                         /////////////////////////////
                         // write padding
                         /////////////////////////////
-                        int paddingBytes = 3 - part.length() % 4;
+                        final int paddingBytes = 3 - part.length() % 4;
                         storeWriter.writeByte(positionLocal, paddingBytes);
                         for (int i = 1; i <= paddingBytes; i++) {
                             storeWriter.writeByte(positionLocal + i, 0);
@@ -169,8 +178,8 @@ public final class WriteHandler {
                             /////////////////////////////
                             // write content (or continue writing content)
                             /////////////////////////////
-                            MessagePart mp = (MessagePart) part;
-                            int bytesToWrite = Math.min(segmentSize - positionLocal, mp.bb.remaining());
+                            final MessagePart mp = (MessagePart) part;
+                            final int bytesToWrite = Math.min(segmentSize - positionLocal, mp.bb.remaining());
                             storeWriter.write(positionLocal, mp.bb, bytesToWrite);
                             updateChecksum(checksum, mp.bb, bytesToWrite);
                             positionLocal += bytesToWrite;
@@ -198,9 +207,58 @@ public final class WriteHandler {
                         }
                         // rewrite the length field at the start of the message
                         storeWriter.writeInt(messageStartSegment, messageStartPositionLocal, contentLength);
-                        state = State.FIRST_PART;
-                        endWritten = true;
-                        break;
+
+                        // TODO write delimiter according to delimitEvery
+                        // delimiter is a special negative length int say -134566777 followed by 56
+                        // bytes. This will be used to find the start of the next message after
+                        // corruption is detected.
+                        messageCount++;
+                        if (delimitEvery != 0) {
+                            if (messageCount % delimitEvery == 0) {
+                                messageCount = 0;
+                                state = State.WRITING_DELIMITER;
+                            } else {
+                                state = State.FIRST_PART;
+                                endWritten = true;
+                                break;
+                            }
+                        } else {
+                            state = State.FIRST_PART;
+                            endWritten = true;
+                            break;
+                        }
+                    } else if (state == State.WRITING_DELIMITER) {
+                        // write a zero length field as normal (which we will overwrite with the first 4
+                        // bytes of the delimiter (a special negative int to mark the record as a
+                        // delimiter).
+                        if (delimiterBb.position() == 0 && positionLocal < segmentSize) {
+                            storeWriter.writeInt(positionLocal, 0);
+                            delimiterStartPositionLocal = positionLocal;
+                            delimiterStartSegment = entryWriteSegment;
+                            delimiterBb.position(4);
+                            positionLocal+=4;
+                        }
+                        if (positionLocal < segmentSize) {
+                            final int bytesToWrite = Math.min(segmentSize - positionLocal, delimiterBb.remaining());
+                            storeWriter.write(positionLocal, delimiterBb, bytesToWrite);
+                            positionLocal += bytesToWrite;
+                            if (bytesToWrite != delimiterBb.remaining()) {
+                                delimiterBb.position(delimiterBb.position() + bytesToWrite);
+                                if (!delimiterBb.hasRemaining()) {
+                                    state = State.FIRST_PART;
+                                } else {
+                                    state = State.WRITING_DELIMITER;
+                                }
+                            } else {
+                                state = State.FIRST_PART;
+                            }
+                            if (state == State.FIRST_PART) {
+                                //rewrite length bytes of delimiter
+                                storeWriter.writeInt(delimiterStartSegment, delimiterStartPositionLocal, Delimiter.START);
+                                endWritten = true;
+                                break;
+                            }
+                        } // otherwise segment full detected and we will return
                     }
                 }
                 writePositionGlobal += positionLocal - entryPositionLocal;
@@ -217,7 +275,7 @@ public final class WriteHandler {
                         storeWriter.closeForWrite(messageStartSegment);
                     }
                 }
-            } catch (Throwable e) {
+            } catch (final Throwable e) {
                 e.printStackTrace();
                 storeWriter.errorOccurred(e);
             }
@@ -230,7 +288,7 @@ public final class WriteHandler {
         if (bb.hasArray()) {
             checksum.update(bb.array(), bb.arrayOffset() + bb.position(), bytesToWrite);
         } else {
-            int p = bb.position();
+            final int p = bb.position();
             for (int i = 0; i < bytesToWrite; i++) {
                 checksum.update(bb.get());
             }

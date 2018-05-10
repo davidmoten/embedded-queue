@@ -62,13 +62,18 @@ public final class FileSystemStore extends Completable implements Store, StoreWr
     private CompletableObserver child;
     private final Map<Reader, ReaderState> readers = new HashMap<>();
     private final Set<Reader> reading = new HashSet<>();
-    
+    private final int delimitEvery;
 
-    public FileSystemStore(File directory, int segmentSize, Scheduler io) {
+    public FileSystemStore(File directory, int segmentSize, int delimitEvery, Scheduler io) {
+        Preconditions.checkNotNull(directory);
+        Preconditions.checkArgument(segmentSize >= 8 && segmentSize % 4 == 0);
+        Preconditions.checkArgument(delimitEvery >= 0);
+        Preconditions.checkNotNull(io);
         this.directory = directory;
         this.segmentSize = segmentSize;
+        this.delimitEvery = delimitEvery;
         this.io = io;
-        this.writeHandler = new WriteHandler(this, segmentSize, io);
+        this.writeHandler = new WriteHandler(this, segmentSize, delimitEvery, io);
         this.readHandler = new ReadHandler(this, io);
     }
 
@@ -338,7 +343,7 @@ public final class FileSystemStore extends Completable implements Store, StoreWr
     @Override
     public ReaderState state(Reader reader) {
         if (!readers.containsKey(reader)) {
-            readers.put(reader,  new ReaderState(reader));
+            readers.put(reader, new ReaderState(reader));
         }
         return readers.get(reader);
     }

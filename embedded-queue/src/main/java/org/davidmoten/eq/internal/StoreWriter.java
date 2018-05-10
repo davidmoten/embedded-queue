@@ -26,5 +26,5 @@ public interface StoreWriter extends HasEventQueue {
     void closeForWrite(Segment writeSegment);
     
     void errorOccurred(Throwable error);
-
+    
 }
