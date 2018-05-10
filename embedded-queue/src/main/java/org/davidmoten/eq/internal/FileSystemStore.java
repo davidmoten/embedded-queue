@@ -62,7 +62,6 @@ public final class FileSystemStore extends Completable implements Store, StoreWr
     private CompletableObserver child;
     private final Map<Reader, ReaderState> readers = new HashMap<>();
     private final Set<Reader> reading = new HashSet<>();
-    private final int delimitEvery;
 
     public FileSystemStore(File directory, int segmentSize, int delimitEvery, Scheduler io) {
         Preconditions.checkNotNull(directory);
@@ -71,7 +70,6 @@ public final class FileSystemStore extends Completable implements Store, StoreWr
         Preconditions.checkNotNull(io);
         this.directory = directory;
         this.segmentSize = segmentSize;
-        this.delimitEvery = delimitEvery;
         this.io = io;
         this.writeHandler = new WriteHandler(this, segmentSize, delimitEvery, io);
         this.readHandler = new ReadHandler(this, io);
