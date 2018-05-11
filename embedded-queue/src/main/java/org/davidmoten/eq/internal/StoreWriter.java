@@ -5,7 +5,8 @@ import java.nio.ByteBuffer;
 import org.davidmoten.eq.internal.event.Event;
 
 /**
- * Performs low-level write operations without concern for serialization and scheduling which is managed by Store and WriteHandler.
+ * Performs low-level write operations without concern for serialization and
+ * scheduling which is managed by Store and WriteHandler.
  */
 public interface StoreWriter extends HasEventQueue {
 
@@ -27,7 +28,7 @@ public interface StoreWriter extends HasEventQueue {
     void addSegment(Segment segment);
 
     void closeForWrite(Segment writeSegment);
-    
+
     void errorOccurred(Throwable error);
-    
+
 }

@@ -12,10 +12,10 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.zip.Checksum;
 
-import org.davidmoten.eq.IORuntimeException;
 import org.davidmoten.eq.Store;
-import org.davidmoten.eq.internal.FileSystemStore.ReaderState.State;
+import org.davidmoten.eq.exception.IORuntimeException;
 import org.davidmoten.eq.internal.event.BatchFinished;
 import org.davidmoten.eq.internal.event.CancelReader;
 import org.davidmoten.eq.internal.event.EndWritten;
@@ -187,11 +187,6 @@ public final class FileSystemStore extends Completable implements Store, StoreWr
         }
     }
 
-    @Override
-    public void errorOccurred(Throwable e) {
-        child.onError(e);
-    }
-
     private void emitComplete() {
         System.out.println("emitting complete");
         child.onComplete();
@@ -209,7 +204,8 @@ public final class FileSystemStore extends Completable implements Store, StoreWr
         return file;
     }
 
-    private static void createFixedLengthFile(File file, long segmentSize) throws FileNotFoundException, IOException {
+    private static void createFixedLengthFile(File file, long segmentSize)
+            throws FileNotFoundException, IOException {
         final RandomAccessFile f = new RandomAccessFile(file, "rw");
         f.setLength(segmentSize);
         f.close();
@@ -226,6 +222,21 @@ public final class FileSystemStore extends Completable implements Store, StoreWr
         queue.offer(event1);
         queue.offer(event2);
         drain();
+    }
+
+    /**
+     * <pre>
+     *  ___ _             __      __   _ _           
+     * / __| |_ ___ _ _ __\ \    / / _(_) |_ ___ _ _ 
+     * \__ \  _/ _ \ '_/ -_) \/\/ / '_| |  _/ -_) '_|
+     * |___/\__\___/_| \___|\_/\_/|_| |_|\__\___|_|
+     * 
+     * </pre>
+     **/
+
+    @Override
+    public void errorOccurred(Throwable e) {
+        child.onError(e);
     }
 
     @Override
@@ -268,21 +279,20 @@ public final class FileSystemStore extends Completable implements Store, StoreWr
         segment.closeForWrite();
     }
 
+    /**
+     * <pre>
+     *  
+     *   ___ _               ___             _         
+     *  / __| |_ ___ _ _ ___| _ \___ __ _ __| |___ _ _ 
+     *  \__ \  _/ _ \ '_/ -_)   / -_) _` / _` / -_) '_|
+     *  |___/\__\___/_| \___|_|_\___\__,_\__,_\___|_|
+     *
+     * </pre>
+     **/
+
     @Override
     public Flowable<Flowable<ByteBuffer>> read(long positionGlobal) {
         return group(new FlowableRead(this, positionGlobal));
-    }
-
-    @SuppressWarnings("unchecked")
-    @VisibleForTesting
-    // TODO unit test
-    static Flowable<Flowable<ByteBuffer>> group(FlowableRead f) {
-        return Flowable.defer(() -> {
-            final long[] count = new long[1];
-            return f.groupBy(x -> count[0]) //
-                    .map(g -> (Flowable<ByteBuffer>) (Flowable<?>) g.takeWhile(x -> x instanceof ByteBuffer)
-                            .doOnComplete(() -> count[0]++));
-        });
     }
 
     @Override
@@ -295,26 +305,6 @@ public final class FileSystemStore extends Completable implements Store, StoreWr
     public void cancel(Reader reader) {
         queue.offer(new CancelReader(reader));
         drain();
-    }
-
-    public static final class ReaderState {
-
-        public final Reader reader;
-        // mutable
-        public long readPositionGlobal;
-        
-        public static enum State {
-            READING_LENGTH, READING_CONTENT, READING_CHECKSUM
-        }
-        
-        public State status = State.READING_LENGTH;
-        
-        public int remaining;
-        
-        public ReaderState(Reader reader) {
-            this.reader = reader;
-            this.readPositionGlobal = reader.startPositionGlobal();
-        }
     }
 
     @Override
@@ -335,4 +325,41 @@ public final class FileSystemStore extends Completable implements Store, StoreWr
         return Optional.empty();
     }
 
+    /////////////////////////////////////////////////////////////////////
+
+    @SuppressWarnings("unchecked")
+    @VisibleForTesting
+    // TODO unit test
+    static Flowable<Flowable<ByteBuffer>> group(FlowableRead f) {
+        return Flowable.defer(() -> {
+            final long[] count = new long[1];
+            return f.groupBy(x -> count[0]) //
+                    .map(g -> (Flowable<ByteBuffer>) (Flowable<?>) g
+                            .takeWhile(x -> x instanceof ByteBuffer)
+                            .doOnComplete(() -> count[0]++));
+        });
+    }
+
+    public static final class ReaderState {
+
+        public final Reader reader;
+        // mutable
+        public long readPositionGlobal;
+
+        public static enum State {
+            READING_LENGTH, READING_CONTENT, READING_CHECKSUM, READING_DELIMITER
+        }
+
+        public State status = State.READING_LENGTH;
+
+        public int remaining;
+
+        public final Checksum checksum;
+
+        public ReaderState(Reader reader) {
+            this.reader = reader;
+            this.readPositionGlobal = reader.startPositionGlobal();
+            this.checksum = Checksums.create();
+        }
+    }
 }

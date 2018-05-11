@@ -3,6 +3,8 @@ package org.davidmoten.eq.internal;
 import java.nio.ByteBuffer;
 import java.util.Optional;
 
+import org.davidmoten.eq.exception.ChecksumFailedException;
+import org.davidmoten.eq.exception.NegativeLengthException;
 import org.davidmoten.eq.internal.FileSystemStore.ReaderState;
 import org.davidmoten.eq.internal.FileSystemStore.ReaderState.State;
 import org.davidmoten.eq.internal.event.RequestBatch;
@@ -46,23 +48,46 @@ public final class ReadHandler {
                         requestAgain = true;
                     }
                     if (state.status == State.READING_LENGTH) {
-                        state.remaining = segment.readInt(positionLocal);
+                        int length = segment.readInt(positionLocal);
+                        if (length == Delimiter.START) {
+                            state.remaining = Delimiter.REMAINING.length;
+                            state.status = State.READING_DELIMITER;
+                        } else if (length < 0) {
+                            // TODO put an event on the queue
+                            state.reader.messageError(new NegativeLengthException());
+                            break;
+                        } else {
+                            state.remaining = length;
+                            state.status = State.READING_CONTENT;
+                        }
                         positionLocal += Constants.LENGTH_BYTES;
                         state.status = State.READING_CONTENT;
-                    } else if (state.status == State.READING_CONTENT) {
+                        state.checksum.reset();
+                    } else if (state.status == State.READING_CONTENT
+                            || state.status == State.READING_DELIMITER) {
                         int bytesToRead = Math.min(state.remaining, segmentSize - positionLocal);
                         ByteBuffer bb = segment.read(positionLocal, bytesToRead);
-                        state.reader.messagePart(bb);
+                        if (state.status == State.READING_CONTENT) {
+                            Checksums.updateChecksum(state.checksum, bb, bytesToRead);
+                            state.reader.messagePart(bb);
+                        }
                         state.remaining -= bytesToRead;
                         positionLocal += bytesToRead;
                         if (state.remaining == 0) {
-                            state.status = State.READING_CHECKSUM;
+                            if (state.status == State.READING_CONTENT) {
+                                state.status = State.READING_CHECKSUM;
+                            } else {
+                                // TODO is delimiter, check that value is as expected
+                                state.status = State.READING_LENGTH;
+                            }
                         }
                     } else if (state.status == State.READING_CHECKSUM) {
                         int checksum = segment.readInt(positionLocal);
                         positionLocal += Constants.CHECKSUM_BYTES;
                         // TODO validate the checksum
-                        assert checksum != Integer.MAX_VALUE;
+                        if (checksum != (int) state.checksum.getValue()) {
+                            state.reader.messageError(new ChecksumFailedException());
+                        }
                         state.reader.messageFinished();
                         break;
                     }

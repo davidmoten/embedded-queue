@@ -1,4 +1,4 @@
-package org.davidmoten.eq;
+package org.davidmoten.eq.exception;
 
 import java.io.IOException;
 

@@ -6,7 +6,7 @@ import java.io.IOException;
 import java.io.RandomAccessFile;
 import java.nio.ByteBuffer;
 
-import org.davidmoten.eq.IORuntimeException;
+import org.davidmoten.eq.exception.IORuntimeException;
 
 public final class Segment {
 

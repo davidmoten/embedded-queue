@@ -8,7 +8,7 @@ import java.util.List;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.zip.Checksum;
 
-import org.davidmoten.eq.IORuntimeException;
+import org.davidmoten.eq.exception.IORuntimeException;
 
 import com.github.davidmoten.guavamini.annotations.VisibleForTesting;
 
