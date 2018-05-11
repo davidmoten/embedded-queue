@@ -80,7 +80,7 @@ public final class WriteHandler {
     }
 
     public void handlePart(Part event) {
-        final int entryPositionLocal = (int) (writePositionGlobal - storeWriter.writeSegment().start);
+        final int entryPositionLocal = (int) (writePositionGlobal - storeWriter.writeSegment().start());
         if (entryPositionLocal == segmentSize) {
             storeWriter.send(new SegmentFull(event));
         } else {

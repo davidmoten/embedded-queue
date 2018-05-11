@@ -75,14 +75,17 @@ public final class FileSystemStore extends Completable implements Store, StoreWr
         this.readHandler = new ReadHandler(this, io);
     }
 
+    @Override
     public Completable add(byte[] bytes) {
         return add(ByteBuffer.wrap(bytes));
     }
 
+    @Override
     public Completable add(ByteBuffer bb) {
         return add(Flowable.just(bb));
     }
 
+    @Override
     public Completable add(Flowable<ByteBuffer> byteBuffers) {
         this.source = byteBuffers //
                 .map(x -> (Part) new MessagePart(x)) //
@@ -149,7 +152,7 @@ public final class FileSystemStore extends Completable implements Store, StoreWr
             int missed = 1;
             while (true) {
                 while (true) {
-                    Event m = queue.poll();
+                    final Event m = queue.poll();
                     if (m != null) {
                         processEvent(m);
                     } else {
@@ -194,19 +197,19 @@ public final class FileSystemStore extends Completable implements Store, StoreWr
     }
 
     private File nextFile(long writePosition) {
-        File file = new File(directory, writePosition + "");
+        final File file = new File(directory, writePosition + "");
         try {
             Preconditions.checkArgument(!file.exists());
             file.createNewFile();
             createFixedLengthFile(file, segmentSize);
-        } catch (IOException e) {
+        } catch (final IOException e) {
             throw new IORuntimeException(e);
         }
         return file;
     }
 
     private static void createFixedLengthFile(File file, long segmentSize) throws FileNotFoundException, IOException {
-        RandomAccessFile f = new RandomAccessFile(file, "rw");
+        final RandomAccessFile f = new RandomAccessFile(file, "rw");
         f.setLength(segmentSize);
         f.close();
     }
@@ -231,55 +234,22 @@ public final class FileSystemStore extends Completable implements Store, StoreWr
 
     @Override
     public void writeInt(int positionLocal, int value) {
-        RandomAccessFile f = writeSegment().writeFile();
-        try {
-            f.seek(positionLocal);
-            f.writeInt(value);
-        } catch (IOException e) {
-            throw new IORuntimeException(e);
-        }
+       writeSegment().writeInt(positionLocal,  value);
     }
 
     @Override
     public void writeByte(int positionLocal, int value) {
-        RandomAccessFile f = writeSegment().writeFile();
-        try {
-            f.seek(positionLocal);
-            f.write(value);
-        } catch (IOException e) {
-            throw new IORuntimeException(e);
-        }
-
+        writeSegment().writeByte(positionLocal, value);
     }
 
     @Override
     public void write(int positionLocal, ByteBuffer bb, int length) {
-        RandomAccessFile f = writeSegment().writeFile();
-        try {
-            f.seek(positionLocal);
-            if (bb.hasArray()) {
-                f.write(bb.array(), bb.arrayOffset() + bb.position(), length);
-            } else {
-                for (int i = 0; i < length; i++) {
-                    f.write(bb.get());
-                }
-            }
-        } catch (IOException e) {
-            throw new IORuntimeException(e);
-        }
-
+        writeSegment().write(positionLocal, bb, length);
     }
 
     @Override
     public void writeInt(Segment segment, int positionLocal, int value) {
-        RandomAccessFile f = writeSegment().writeFile();
-        try {
-            f.seek(positionLocal);
-            f.writeInt(value);
-        } catch (IOException e) {
-            throw new IORuntimeException(e);
-        }
-
+        segment.writeInt(positionLocal, value);
     }
 
     @Override
@@ -307,7 +277,7 @@ public final class FileSystemStore extends Completable implements Store, StoreWr
     // TODO unit test
     static Flowable<Flowable<ByteBuffer>> group(FlowableRead f) {
         return Flowable.defer(() -> {
-            long[] count = new long[1];
+            final long[] count = new long[1];
             return f.groupBy(x -> count[0]) //
                     .map(g -> (Flowable<ByteBuffer>) (Flowable<?>) g.takeWhile(x -> x instanceof ByteBuffer)
                             .doOnComplete(() -> count[0]++));
@@ -348,8 +318,8 @@ public final class FileSystemStore extends Completable implements Store, StoreWr
 
     @Override
     public Optional<Segment> segment(long positionGlobal) {
-        for (Segment segment : segments) {
-            if (positionGlobal < segment.start + segmentSize) {
+        for (final Segment segment : segments) {
+            if (positionGlobal < segment.start() + segmentSize) {
                 return Optional.of(segment);
             }
         }
