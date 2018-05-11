@@ -36,7 +36,7 @@ public final class WriteHandler {
         FIRST_PART, WRITTEN_LENGTH, WRITING_CONTENT, WRITTEN_CONTENT, WRITING_DELIMITER;
     }
 
-    private final Checksum checksum = new CRC32();
+    private final Checksum checksum = Checksums.create();
 
     int contentLength;
 
@@ -64,10 +64,6 @@ public final class WriteHandler {
     Segment delimiterStartSegment;
 
     State state = State.FIRST_PART;
-
-    private static final int CHECKSUM_BYTES = 4;
-
-    private static final int LENGTH_BYTES = 4;
 
     public void handleSegmentFull(SegmentFull event) {
         // blocking operations must be scheduled on io scheduler
@@ -156,7 +152,7 @@ public final class WriteHandler {
                         storeWriter.writeInt(positionLocal, 0);
                         messageStartSegment = entryWriteSegment;
                         messageStartPositionLocal = positionLocal;
-                        positionLocal += LENGTH_BYTES;
+                        positionLocal += Constants.LENGTH_BYTES;
                         checksum.reset();
                         contentLength = 0;
                         state = State.WRITTEN_LENGTH;
@@ -181,7 +177,7 @@ public final class WriteHandler {
                             final MessagePart mp = (MessagePart) part;
                             final int bytesToWrite = Math.min(segmentSize - positionLocal, mp.bb.remaining());
                             storeWriter.write(positionLocal, mp.bb, bytesToWrite);
-                            updateChecksum(checksum, mp.bb, bytesToWrite);
+                            Checksums.updateChecksum(checksum, mp.bb, bytesToWrite);
                             positionLocal += bytesToWrite;
                             contentLength += bytesToWrite;
                             if (bytesToWrite != mp.bb.remaining()) {
@@ -199,7 +195,7 @@ public final class WriteHandler {
                         // write checksum
                         /////////////////////////////
                         storeWriter.writeInt(positionLocal, (int) checksum.getValue());
-                        positionLocal += CHECKSUM_BYTES;
+                        positionLocal += Constants.CHECKSUM_BYTES;
                         // ensure the length field of the next item is set to zero
                         // if is end of segment then don't need to do it
                         if (positionLocal < segmentSize) {
@@ -279,21 +275,6 @@ public final class WriteHandler {
                 e.printStackTrace();
                 storeWriter.errorOccurred(e);
             }
-        }
-    }
-
-    // TODO test
-    @VisibleForTesting
-    static void updateChecksum(Checksum checksum, ByteBuffer bb, int bytesToWrite) {
-        if (bb.hasArray()) {
-            checksum.update(bb.array(), bb.arrayOffset() + bb.position(), bytesToWrite);
-        } else {
-            final int p = bb.position();
-            for (int i = 0; i < bytesToWrite; i++) {
-                checksum.update(bb.get());
-            }
-            // revert the position changed by calling bb.get()
-            bb.position(p);
         }
     }
 

@@ -3,10 +3,14 @@ package org.davidmoten.eq.internal;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.io.RandomAccessFile;
+import java.nio.ByteBuffer;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.zip.Checksum;
 
 import org.davidmoten.eq.IORuntimeException;
+
+import com.github.davidmoten.guavamini.annotations.VisibleForTesting;
 
 class Util {
 
@@ -41,7 +45,7 @@ class Util {
         int ret = 0;
         for (int i = 0; i < 4 && i < bytes.length; i++) {
             ret <<= 8;
-            ret |= (int) bytes[i] & 0xFF;
+            ret |= bytes[i] & 0xFF;
         }
         return ret;
     }
@@ -103,4 +107,5 @@ class Util {
             return list.get(i + 1);
         }
     }
+    
 }

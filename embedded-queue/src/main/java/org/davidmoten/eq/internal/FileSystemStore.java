@@ -15,6 +15,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import org.davidmoten.eq.IORuntimeException;
 import org.davidmoten.eq.Store;
+import org.davidmoten.eq.internal.FileSystemStore.ReaderState.State;
 import org.davidmoten.eq.internal.event.BatchFinished;
 import org.davidmoten.eq.internal.event.CancelReader;
 import org.davidmoten.eq.internal.event.EndWritten;
@@ -72,7 +73,7 @@ public final class FileSystemStore extends Completable implements Store, StoreWr
         this.segmentSize = segmentSize;
         this.io = io;
         this.writeHandler = new WriteHandler(this, segmentSize, delimitEvery, io);
-        this.readHandler = new ReadHandler(this, io);
+        this.readHandler = new ReadHandler(this, segmentSize, io);
     }
 
     @Override
@@ -234,7 +235,7 @@ public final class FileSystemStore extends Completable implements Store, StoreWr
 
     @Override
     public void writeInt(int positionLocal, int value) {
-       writeSegment().writeInt(positionLocal,  value);
+        writeSegment().writeInt(positionLocal, value);
     }
 
     @Override
@@ -301,7 +302,15 @@ public final class FileSystemStore extends Completable implements Store, StoreWr
         public final Reader reader;
         // mutable
         public long readPositionGlobal;
-
+        
+        public static enum State {
+            READING_LENGTH, READING_CONTENT, READING_CHECKSUM
+        }
+        
+        public State status = State.READING_LENGTH;
+        
+        public int remaining;
+        
         public ReaderState(Reader reader) {
             this.reader = reader;
             this.readPositionGlobal = reader.startPositionGlobal();

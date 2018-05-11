@@ -112,4 +112,24 @@ public final class Segment {
         return file;
     }
 
+    public int readInt(long positionLocal) {
+        try {
+            raf.seek(positionLocal);
+            return raf.readInt();
+        } catch (final IOException e) {
+            throw new IORuntimeException(e);
+        }
+    }
+
+    public ByteBuffer read(int positionLocal, int length) {
+        byte[] b = new byte[length];
+        try {
+            raf.seek(positionLocal);
+            raf.read(b, 0, length);
+        } catch (IOException e) {
+            throw new IORuntimeException(e);
+        }
+        return ByteBuffer.wrap(b);
+    }
+
 }
